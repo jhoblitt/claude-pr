@@ -121,9 +121,11 @@ func link(text, url string) string {
 }
 
 // resumeURI is the custom-scheme target a WezTerm open-uri handler turns into
-// `claude --resume <id>` in the session's cwd.
+// `claude --resume <id>` in the session's cwd. A path-based form (no query
+// string) is used because WezTerm only treats the result as a clickable
+// hyperlink without a "?...&..." query: claude-resume://r/<id><abs-cwd>.
 func resumeURI(uuid, cwdAbs string) string {
-	return "claude-resume://r?id=" + uuid + "&cwd=" + cwdAbs
+	return "claude-resume://r/" + uuid + cwdAbs
 }
 
 func col(style, s string) string {
@@ -873,17 +875,16 @@ func weztermBlock() string {
   local wezterm = require 'wezterm'
   local act = wezterm.action
   wezterm.on('open-uri', function(window, pane, uri)
-    if uri:find('^claude%-resume:') then
+    -- claude-resume://r/<id><abs-cwd>, e.g. claude-resume://r/<uuid>/home/me/proj
+    local id, cwd = uri:match('^claude%-resume://r/([^/]+)(/?.*)$')
+    if id then
       wezterm.log_info('claude-pr: resume ' .. uri) -- visible in the debug overlay (Ctrl+Shift+L)
-      local id = uri:match('id=([%x%-]+)')
-      local cwd = uri:match('cwd=(.+)$') -- cwd is last, so .+$ captures the path
-      if id then
-        window:perform_action(act.SpawnCommandInNewTab {
-          cwd = cwd,
-          -- login shell so CLAUDE_CONFIG_DIR is set; cwd makes --resume's scope match
-          args = { 'bash', '-lc', 'exec claude --resume ' .. id },
-        }, pane)
-      end
+      if cwd == '' then cwd = nil end
+      window:perform_action(act.SpawnCommandInNewTab {
+        cwd = cwd,
+        -- login shell so CLAUDE_CONFIG_DIR is set; cwd makes --resume's scope match
+        args = { 'bash', '-lc', 'exec claude --resume ' .. id },
+      }, pane)
       return false -- handled; don't pass the unknown scheme to the OS opener
     end
   end)

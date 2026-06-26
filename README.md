@@ -89,16 +89,15 @@ local wezterm = require 'wezterm'
 local act = wezterm.action
 
 wezterm.on('open-uri', function(window, pane, uri)
-  if uri:find('^claude%-resume:') then
-    local id  = uri:match('id=([%x%-]+)')
-    local cwd = uri:match('cwd=(.+)$') -- cwd is last, so .+$ captures the path
-    if id then
-      window:perform_action(act.SpawnCommandInNewTab {
-        cwd = cwd,
-        -- login shell so CLAUDE_CONFIG_DIR is set; cwd makes --resume's scope match
-        args = { 'bash', '-lc', 'exec claude --resume ' .. id },
-      }, pane)
-    end
+  -- claude-resume://r/<id><abs-cwd>  (path form: WezTerm won't click a ?query URI)
+  local id, cwd = uri:match('^claude%-resume://r/([^/]+)(/?.*)$')
+  if id then
+    if cwd == '' then cwd = nil end
+    window:perform_action(act.SpawnCommandInNewTab {
+      cwd = cwd,
+      -- login shell so CLAUDE_CONFIG_DIR is set; cwd makes --resume's scope match
+      args = { 'bash', '-lc', 'exec claude --resume ' .. id },
+    }, pane)
     return false -- handled; don't pass the unknown scheme to the OS opener
   end
 end)
