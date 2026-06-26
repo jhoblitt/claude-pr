@@ -22,6 +22,8 @@
 //                         list mode: show only PRs the session created.
 //        -a / --all       list mode: also list sessions with no tracked PRs
 //                         (hidden by default).
+//        --exited         list mode: also include exited (no longer running)
+//                         sessions, shown with an "exited" status.
 //        --status         list mode: annotate each PR with live GitHub state
 //                         (OPEN/MERGED/CLOSED, draft, checks, review) via `gh`.
 //        --url            print raw PR URLs instead of terminal hyperlinks.
@@ -155,6 +157,8 @@ func statusRank(s string) int {
 		return 2
 	case "shell":
 		return 3
+	case "exited":
+		return 5
 	default:
 		return 4
 	}
@@ -170,6 +174,8 @@ func statusStyle(s string) string {
 		return cGreen
 	case "shell":
 		return cBlue
+	case "exited":
+		return cDim
 	default:
 		return cDim
 	}
@@ -412,6 +418,7 @@ type regSession struct {
 	Status    string `json:"status"`
 	Cwd       string `json:"cwd"`
 	Pid       int    `json:"pid"`
+	Alive     bool   `json:"-"`
 }
 
 func pidAlive(pid int) bool {
@@ -422,9 +429,10 @@ func pidAlive(pid int) bool {
 	return err == nil
 }
 
-// liveSessions reads each config's sessions/ registry and returns the sessions
-// whose process is still running, de-duplicated by session ID.
-func liveSessions(roots []string) []regSession {
+// readSessions returns the running sessions from each config's sessions/
+// registry (the daemon prunes the registry on exit, so this is live-only),
+// de-duplicated by session ID.
+func readSessions(roots []string) []regSession {
 	bySID := map[string]regSession{}
 	seenDir := map[string]bool{}
 	for _, root := range roots {
@@ -449,6 +457,7 @@ func liveSessions(roots []string) []regSession {
 			if json.Unmarshal(data, &s) != nil || s.SessionID == "" || !pidAlive(s.Pid) {
 				continue
 			}
+			s.Alive = true
 			if _, ok := bySID[s.SessionID]; !ok {
 				bySID[s.SessionID] = s
 			}
@@ -459,6 +468,24 @@ func liveSessions(roots []string) []regSession {
 		out = append(out, s)
 	}
 	return out
+}
+
+// cwdFromTranscript returns the session's working directory, read from the first
+// transcript record that carries one.
+func cwdFromTranscript(data []byte) string {
+	marker := []byte(`"cwd"`)
+	for _, raw := range bytes.Split(data, []byte("\n")) {
+		if !bytes.Contains(raw, marker) {
+			continue
+		}
+		var r struct {
+			Cwd string `json:"cwd"`
+		}
+		if json.Unmarshal(bytes.TrimSpace(raw), &r) == nil && r.Cwd != "" {
+			return r.Cwd
+		}
+	}
+	return ""
 }
 
 // transcriptIndex maps a session UUID to its top-level transcript path.
@@ -657,9 +684,20 @@ func fetchStatuses(prs []prRef) map[string]string {
 	return out
 }
 
-func runListMode(creatorOnly, showStatus, showEmpty bool, roots []string) {
-	sessions := liveSessions(roots)
+func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, roots []string) {
 	idx := transcriptIndex(roots)
+	sessions := readSessions(roots)
+	if includeExited {
+		liveSet := map[string]bool{}
+		for _, s := range sessions {
+			liveSet[s.SessionID] = true
+		}
+		for uuid := range idx {
+			if !liveSet[uuid] {
+				sessions = append(sessions, regSession{SessionID: uuid}) // Alive=false => exited
+			}
+		}
+	}
 
 	type row struct {
 		name, uuid, cwdAbs, status string
@@ -668,9 +706,13 @@ func runListMode(creatorOnly, showStatus, showEmpty bool, roots []string) {
 	var rows []row
 	for _, s := range sessions {
 		var prs []prRef
+		name, cwd := s.Name, s.Cwd
 		if tf := idx[s.SessionID]; tf != "" {
 			if data, err := os.ReadFile(tf); err == nil {
 				prs = scanTracked(data)
+				if !s.Alive { // exited: registry is gone, so pull metadata from the transcript
+					name, cwd = latestCustomTitle(data), cwdFromTranscript(data)
+				}
 			}
 		}
 		if creatorOnly {
@@ -686,10 +728,12 @@ func runListMode(creatorOnly, showStatus, showEmpty bool, roots []string) {
 			continue
 		}
 		st := s.Status
-		if st == "" {
+		if !s.Alive {
+			st = "exited"
+		} else if st == "" {
 			st = "?"
 		}
-		rows = append(rows, row{s.Name, s.SessionID, s.Cwd, st, prs})
+		rows = append(rows, row{name, s.SessionID, cwd, st, prs})
 	}
 
 	const unnamed = "(unnamed)"
@@ -958,6 +1002,8 @@ Flags:
   -c, --creator    PR mode: print only the true creator.
                    list mode: show only PRs the session created.
   -a, --all        list mode: also show sessions with no tracked PRs.
+      --exited     list mode: also include exited (no longer running) sessions,
+                   shown with an "exited" status.
       --status     list mode: annotate each PR with live GitHub state
                    (OPEN/MERGED/CLOSED, draft, checks, review) via gh.
       --url        print raw PR URLs instead of terminal hyperlinks.
@@ -989,6 +1035,7 @@ func main() {
 	creatorOnly := false
 	showStatus := false
 	showEmpty := false
+	includeExited := false
 	forceURL := false
 	colorMode := "auto"
 	resumeMode := "auto"
@@ -1005,6 +1052,8 @@ func main() {
 			creatorOnly = true
 		case "-a", "--all":
 			showEmpty = true
+		case "--exited":
+			includeExited = true
 		case "--status":
 			showStatus = true
 		case "--url":
@@ -1051,7 +1100,7 @@ func main() {
 	}
 
 	if len(pos) == 0 {
-		runListMode(creatorOnly, showStatus, showEmpty, roots)
+		runListMode(creatorOnly, showStatus, showEmpty, includeExited, roots)
 		return
 	}
 	if showStatus {

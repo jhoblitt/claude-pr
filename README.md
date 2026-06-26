@@ -47,6 +47,8 @@ ci-loop-to-iscsi                724ceb21  ~/github/rook7   idle
 Flags:
 
 - `-a`, `--all` — also list sessions with no tracked PRs (hidden by default).
+- `--exited` — also include exited (no longer running) sessions, shown with an
+  `exited` status (live sessions only by default).
 - `-c`, `--creator` — show only the PRs each session created.
 - `--status` — annotate each PR with live GitHub state (OPEN/MERGED/CLOSED,
   draft, check counts, review decision) via the `gh` CLI.
