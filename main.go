@@ -874,6 +874,7 @@ func weztermBlock() string {
   local act = wezterm.action
   wezterm.on('open-uri', function(window, pane, uri)
     if uri:find('^claude%-resume:') then
+      wezterm.log_info('claude-pr: resume ' .. uri) -- visible in the debug overlay (Ctrl+Shift+L)
       local id = uri:match('id=([%x%-]+)')
       local cwd = uri:match('cwd=(.+)$') -- cwd is last, so .+$ captures the path
       if id then
