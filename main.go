@@ -27,6 +27,7 @@
 //        --url            print raw PR URLs instead of terminal hyperlinks.
 //        --full-uuid      show the full session UUID (default: 8-char prefix).
 //        --color/--no-color  force or disable ANSI color (default: auto).
+//        -h / --help      show usage and exit.
 package main
 
 import (
@@ -793,6 +794,40 @@ func runListMode(creatorOnly, showStatus, showEmpty bool, roots []string) {
 	}
 }
 
+func printUsage() {
+	fmt.Print(`claude-pr — map GitHub PRs to the Claude Code sessions responsible for them.
+
+Usage:
+  claude-pr [flags] [<PR_NUMBER> [owner/repo]]
+
+Modes:
+  with a PR number   show which session(s) created or merely touched that PR.
+  no arguments       list currently-live sessions and the PRs each is tracking.
+
+Flags:
+  -c, --creator    PR mode: print only the true creator.
+                   list mode: show only PRs the session created.
+  -a, --all        list mode: also show sessions with no tracked PRs.
+      --status     list mode: annotate each PR with live GitHub state
+                   (OPEN/MERGED/CLOSED, draft, checks, review) via gh.
+      --url        print raw PR URLs instead of terminal hyperlinks.
+      --full-uuid  show the full session UUID (default: 8-char prefix).
+      --color      force ANSI color.
+      --no-color   disable ANSI color (default: auto; honors NO_COLOR).
+  -h, --help       show this help and exit.
+
+Examples:
+  claude-pr 17801           which session created PR #17801
+  claude-pr -c 17801        just the creator
+  claude-pr                 live sessions and the PRs they track
+  claude-pr --all --status  include empty sessions, with live PR state
+
+Sessions are read read-only from $CLAUDE_CONFIG_DIR (falling back to
+~/.claude-personal, ~/.claude, ~/.config/claude). Liveness uses /proc (Linux);
+--status needs the gh CLI authenticated.
+`)
+}
+
 func main() {
 	creatorOnly := false
 	showStatus := false
@@ -802,6 +837,9 @@ func main() {
 	var pos []string
 	for _, a := range os.Args[1:] {
 		switch a {
+		case "-h", "--help":
+			printUsage()
+			return
 		case "-c", "--creator":
 			creatorOnly = true
 		case "-a", "--all":
