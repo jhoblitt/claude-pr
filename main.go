@@ -27,6 +27,9 @@
 //        --url            print raw PR URLs instead of terminal hyperlinks.
 //        --full-uuid      show the full session UUID (default: 8-char prefix).
 //        --color/--no-color  force or disable ANSI color (default: auto).
+//        --resume-links/--no-resume-links  make each session name/uuid a
+//                         clickable resume link (auto-on under WezTerm on a TTY;
+//                         needs an open-uri handler in the wezterm config).
 //        -h / --help      show usage and exit.
 package main
 
@@ -78,6 +81,7 @@ var (
 	useHyperlink bool
 	showRawURL   bool
 	fullUUID     bool
+	resumeLinks  bool
 )
 
 const (
@@ -100,13 +104,24 @@ func uuidDisp(u string) string {
 	return u[:8]
 }
 
-// link wraps text in an OSC 8 terminal hyperlink when enabled, else returns it
-// unchanged. The escape sequences are zero-width, so visible length == len(text).
+// osc8 wraps text in an OSC 8 terminal hyperlink. The escape sequences are
+// zero-width, so visible length == len(text).
+func osc8(text, url string) string {
+	return "\033]8;;" + url + "\033\\" + text + "\033]8;;\033\\"
+}
+
+// link wraps text in a hyperlink when PR hyperlinks are enabled, else as-is.
 func link(text, url string) string {
 	if !useHyperlink {
 		return text
 	}
-	return "\033]8;;" + url + "\033\\" + text + "\033]8;;\033\\"
+	return osc8(text, url)
+}
+
+// resumeURI is the custom-scheme target a WezTerm open-uri handler turns into
+// `claude --resume <id>` in the session's cwd.
+func resumeURI(uuid, cwdAbs string) string {
+	return "claude-resume://r?id=" + uuid + "&cwd=" + cwdAbs
 }
 
 func col(style, s string) string {
@@ -647,8 +662,8 @@ func runListMode(creatorOnly, showStatus, showEmpty bool, roots []string) {
 	idx := transcriptIndex(roots)
 
 	type row struct {
-		name, uuid, cwd, status string
-		prs                     []prRef
+		name, uuid, cwdAbs, status string
+		prs                        []prRef
 	}
 	var rows []row
 	for _, s := range sessions {
@@ -674,7 +689,7 @@ func runListMode(creatorOnly, showStatus, showEmpty bool, roots []string) {
 		if st == "" {
 			st = "?"
 		}
-		rows = append(rows, row{s.Name, s.SessionID, abbrevHome(s.Cwd), st, prs})
+		rows = append(rows, row{s.Name, s.SessionID, s.Cwd, st, prs})
 	}
 
 	const unnamed = "(unnamed)"
@@ -742,7 +757,7 @@ func runListMode(creatorOnly, showStatus, showEmpty bool, roots []string) {
 		if n := len(uuidDisp(r.uuid)); n > wUUID {
 			wUUID = n
 		}
-		if n := len(r.cwd); n > wCwd {
+		if n := len(abbrevHome(r.cwdAbs)); n > wCwd {
 			wCwd = n
 		}
 		for _, p := range r.prs {
@@ -760,10 +775,18 @@ func runListMode(creatorOnly, showStatus, showEmpty bool, roots []string) {
 		if r.name == "" {
 			nameStyle = cDim
 		}
+		nameText, uuidText := nameOf(r), uuidDisp(r.uuid)
+		nameCell, uuidCell := col(nameStyle, nameText), col(cDim, uuidText)
+		if resumeLinks {
+			uri := resumeURI(r.uuid, r.cwdAbs)
+			nameCell, uuidCell = osc8(nameCell, uri), osc8(uuidCell, uri)
+		}
+		nameCell += strings.Repeat(" ", wName-len(nameText))
+		uuidCell += strings.Repeat(" ", wUUID-len(uuidText))
 		fmt.Printf("%s  %s  %s  %s\n",
-			field(nameOf(r), wName, nameStyle),
-			field(uuidDisp(r.uuid), wUUID, cDim),
-			field(r.cwd, wCwd, cCyan),
+			nameCell,
+			uuidCell,
+			field(abbrevHome(r.cwdAbs), wCwd, cCyan),
 			col(statusStyle(r.status), r.status))
 		for j, p := range r.prs {
 			conn := "├"
@@ -814,6 +837,10 @@ Flags:
       --full-uuid  show the full session UUID (default: 8-char prefix).
       --color      force ANSI color.
       --no-color   disable ANSI color (default: auto; honors NO_COLOR).
+      --resume-links / --no-resume-links
+                   make each session name/uuid a clickable link that resumes it.
+                   Auto-on under WezTerm on a TTY; needs an open-uri handler in
+                   your wezterm config (see README).
   -h, --help       show this help and exit.
 
 Examples:
@@ -834,6 +861,7 @@ func main() {
 	showEmpty := false
 	forceURL := false
 	colorMode := "auto"
+	resumeMode := "auto"
 	var pos []string
 	for _, a := range os.Args[1:] {
 		switch a {
@@ -854,6 +882,10 @@ func main() {
 			colorMode = "always"
 		case "--no-color":
 			colorMode = "never"
+		case "--resume-links":
+			resumeMode = "always"
+		case "--no-resume-links":
+			resumeMode = "never"
 		default:
 			pos = append(pos, a)
 		}
@@ -869,6 +901,15 @@ func main() {
 	}
 	useHyperlink = tty && !forceURL
 	showRawURL = forceURL || !tty
+	switch resumeMode {
+	case "always":
+		resumeLinks = true
+	case "never":
+		resumeLinks = false
+	default: // auto: on under WezTerm on a TTY (the open-uri handler turns the link into a resume)
+		wez := os.Getenv("WEZTERM_PANE") != "" || os.Getenv("TERM_PROGRAM") == "WezTerm"
+		resumeLinks = tty && wez && !forceURL
+	}
 
 	roots := discoverRoots()
 	if len(roots) == 0 {

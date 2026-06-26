@@ -54,6 +54,45 @@ Flags:
 - `--full-uuid` — show the full session UUID (default: 8-char prefix).
 - `--color` / `--no-color` — force or disable ANSI color (default: auto; honors
   `NO_COLOR`).
+- `--resume-links` / `--no-resume-links` — make each session name/uuid a
+  clickable link that resumes it (see [Resuming in WezTerm](#resuming-in-wezterm)).
+  Auto-enabled when running under WezTerm on a TTY.
+
+## Resuming in WezTerm
+
+`claude --resume` only accepts a full session UUID or the exact session title,
+and it is scoped to the session's project directory — so the short ids in the
+listing can't be pasted into it directly. Under [WezTerm](https://wezterm.org),
+`claude-pr` instead makes each session's name and id a clickable hyperlink with a
+custom `claude-resume://` scheme that carries the full UUID and cwd. This is
+auto-enabled when WezTerm is detected (`$WEZTERM_PANE`) and stdout is a TTY.
+
+For the click to resume the session, add an `open-uri` handler to your WezTerm
+config that turns the link into `claude --resume`:
+
+```lua
+-- ~/.wezterm.lua
+local wezterm = require 'wezterm'
+local act = wezterm.action
+
+wezterm.on('open-uri', function(window, pane, uri)
+  if uri:find('^claude%-resume:') then
+    local id  = uri:match('id=([%x%-]+)')
+    local cwd = uri:match('cwd=(.+)$') -- cwd is last, so .+$ captures the path
+    if id then
+      window:perform_action(act.SpawnCommandInNewTab {
+        cwd = cwd,
+        -- login shell so CLAUDE_CONFIG_DIR is set; cwd makes --resume's scope match
+        args = { 'bash', '-lc', 'exec claude --resume ' .. id },
+      }, pane)
+    end
+    return false -- handled; don't pass the unknown scheme to the OS opener
+  end
+end)
+```
+
+Then Ctrl+Click (WezTerm's default link trigger) a session in the list to open
+`claude --resume` for it in a new tab. Without the handler the link is inert.
 
 ## Install
 
