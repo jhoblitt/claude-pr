@@ -88,14 +88,17 @@ Or add the handler yourself:
 local wezterm = require 'wezterm'
 local act = wezterm.action
 
+local function urldecode(s)
+  return (s:gsub('%%(%x%x)', function(h) return string.char(tonumber(h, 16)) end))
+end
 wezterm.on('open-uri', function(window, pane, uri)
-  -- claude-resume://r/<id><abs-cwd>  (path form: WezTerm won't click a ?query URI)
-  local id, cwd = uri:match('^claude%-resume://r/([^/]+)(/?.*)$')
+  -- claude-resume://r/<id>/<urlencoded CLAUDE_CONFIG_DIR>/<urlencoded cwd>
+  -- (path form: WezTerm won't click a ?query URI)
+  local id, cfg, cwd = uri:match('^claude%-resume://r/([^/]+)/([^/]+)/([^/]+)$')
   if id then
-    if cwd == '' then cwd = nil end
     window:perform_action(act.SpawnCommandInNewTab {
-      cwd = cwd,
-      -- login shell so CLAUDE_CONFIG_DIR is set; cwd makes --resume's scope match
+      cwd = urldecode(cwd), -- cwd makes --resume's project scope match
+      set_environment_variables = { CLAUDE_CONFIG_DIR = urldecode(cfg) },
       args = { 'bash', '-lc', 'exec claude --resume ' .. id },
     }, pane)
     return false -- handled; don't pass the unknown scheme to the OS opener

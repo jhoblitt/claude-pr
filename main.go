@@ -120,12 +120,41 @@ func link(text, url string) string {
 	return osc8(text, url)
 }
 
+// pctEncode percent-encodes all but RFC 3986 unreserved bytes, so an absolute
+// path becomes a single slash-free URI path segment.
+func pctEncode(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' ||
+			c == '-' || c == '_' || c == '.' || c == '~' {
+			b.WriteByte(c)
+		} else {
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&0x0f])
+		}
+	}
+	return b.String()
+}
+
+// cfgFromPath returns the Claude config dir for a transcript path (the part
+// before "/projects/"), which `claude --resume` needs as CLAUDE_CONFIG_DIR.
+func cfgFromPath(transcriptPath string) string {
+	if i := strings.Index(transcriptPath, "/projects/"); i >= 0 {
+		return transcriptPath[:i]
+	}
+	return ""
+}
+
 // resumeURI is the custom-scheme target a WezTerm open-uri handler turns into
-// `claude --resume <id>` in the session's cwd. A path-based form (no query
-// string) is used because WezTerm only treats the result as a clickable
-// hyperlink without a "?...&..." query: claude-resume://r/<id><abs-cwd>.
-func resumeURI(uuid, cwdAbs string) string {
-	return "claude-resume://r/" + uuid + cwdAbs
+// `claude --resume <id>`. A query-free path form is used because WezTerm won't
+// make a "?...&..." URI clickable; cfg and cwd are URL-encoded path segments so
+// the handler can set CLAUDE_CONFIG_DIR (absent from the spawn's login shell)
+// and the project-scoping cwd: claude-resume://r/<id>/<enc cfg>/<enc cwd>.
+func resumeURI(uuid, cfg, cwdAbs string) string {
+	return "claude-resume://r/" + uuid + "/" + pctEncode(cfg) + "/" + pctEncode(cwdAbs)
 }
 
 func col(style, s string) string {
@@ -702,14 +731,15 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, roots [
 	}
 
 	type row struct {
-		name, uuid, cwdAbs, status string
-		prs                        []prRef
+		name, uuid, cwdAbs, cfg, status string
+		prs                             []prRef
 	}
 	var rows []row
 	for _, s := range sessions {
 		var prs []prRef
 		name, cwd := s.Name, s.Cwd
-		if tf := idx[s.SessionID]; tf != "" {
+		tf := idx[s.SessionID]
+		if tf != "" {
 			if data, err := os.ReadFile(tf); err == nil {
 				prs = scanTracked(data)
 				if !s.Alive { // exited: registry is gone, so pull metadata from the transcript
@@ -717,6 +747,7 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, roots [
 				}
 			}
 		}
+		cfg := cfgFromPath(tf)
 		if creatorOnly {
 			var only []prRef
 			for _, p := range prs {
@@ -735,7 +766,7 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, roots [
 		} else if st == "" {
 			st = "?"
 		}
-		rows = append(rows, row{name, s.SessionID, cwd, st, prs})
+		rows = append(rows, row{name, s.SessionID, cwd, cfg, st, prs})
 	}
 
 	const unnamed = "(unnamed)"
@@ -824,7 +855,7 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, roots [
 		nameText, uuidText := nameOf(r), uuidDisp(r.uuid)
 		nameCell, uuidCell := col(nameStyle, nameText), col(cDim, uuidText)
 		if resumeLinks {
-			uri := resumeURI(r.uuid, r.cwdAbs)
+			uri := resumeURI(r.uuid, r.cfg, r.cwdAbs)
 			nameCell, uuidCell = osc8(nameCell, uri), osc8(uuidCell, uri)
 		}
 		nameCell += strings.Repeat(" ", wName-len(nameText))
@@ -874,15 +905,17 @@ func weztermBlock() string {
 	return wezBegin + "\n" + `do
   local wezterm = require 'wezterm'
   local act = wezterm.action
+  local function urldecode(s)
+    return (s:gsub('%%(%x%x)', function(h) return string.char(tonumber(h, 16)) end))
+  end
   wezterm.on('open-uri', function(window, pane, uri)
-    -- claude-resume://r/<id><abs-cwd>, e.g. claude-resume://r/<uuid>/home/me/proj
-    local id, cwd = uri:match('^claude%-resume://r/([^/]+)(/?.*)$')
+    -- claude-resume://r/<id>/<urlencoded CLAUDE_CONFIG_DIR>/<urlencoded cwd>
+    local id, cfg, cwd = uri:match('^claude%-resume://r/([^/]+)/([^/]+)/([^/]+)$')
     if id then
       wezterm.log_info('claude-pr: resume ' .. uri) -- visible in the debug overlay (Ctrl+Shift+L)
-      if cwd == '' then cwd = nil end
       window:perform_action(act.SpawnCommandInNewTab {
-        cwd = cwd,
-        -- login shell so CLAUDE_CONFIG_DIR is set; cwd makes --resume's scope match
+        cwd = urldecode(cwd), -- cwd makes --resume's project scope match
+        set_environment_variables = { CLAUDE_CONFIG_DIR = urldecode(cfg) }, -- not set by the login shell
         args = { 'bash', '-lc', 'exec claude --resume ' .. id },
       }, pane)
       return false -- handled; don't pass the unknown scheme to the OS opener
