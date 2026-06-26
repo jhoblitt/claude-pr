@@ -67,8 +67,19 @@ listing can't be pasted into it directly. Under [WezTerm](https://wezterm.org),
 custom `claude-resume://` scheme that carries the full UUID and cwd. This is
 auto-enabled when WezTerm is detected (`$WEZTERM_PANE`) and stdout is a TTY.
 
-For the click to resume the session, add an `open-uri` handler to your WezTerm
-config that turns the link into `claude --resume`:
+For the click to resume the session, your WezTerm config needs an `open-uri`
+handler that turns the link into `claude --resume`. Install it automatically:
+
+```
+claude-pr --install-wezterm
+```
+
+This creates `~/.wezterm.lua` if you don't have one, or injects a
+marker-delimited handler block into your existing config (backing it up to
+`*.claude-pr.bak` first). It's idempotent — re-running updates the block in
+place. WezTerm auto-reloads on save.
+
+Or add the handler yourself:
 
 ```lua
 -- ~/.wezterm.lua
