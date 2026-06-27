@@ -1,9 +1,8 @@
 version: 2
 updates:
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
+  # GitHub Actions are pinned to commit SHAs with ratchet (`ratchet update`),
+  # which uses a comment format Dependabot does not understand — so no
+  # github-actions ecosystem here.
   - package-ecosystem: gomod
     directory: /
     schedule:
