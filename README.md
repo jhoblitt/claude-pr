@@ -1,5 +1,7 @@
 # claude-pr
 
+[![CI](https://github.com/jhoblitt/claude-pr/actions/workflows/ci.yml/badge.svg)](https://github.com/jhoblitt/claude-pr/actions/workflows/ci.yml)
+
 Reverse-map GitHub pull requests to the [Claude Code](https://claude.com/claude-code)
 sessions responsible for them, and see what PRs your live sessions are tracking.
 
