@@ -18,21 +18,22 @@
 // (honoring NO_COLOR); unnamed sessions show "(unnamed)".
 //
 // Usage: claude-pr [flags] [<PR_NUMBER> [owner/repo]]
-//        -c / --creator   PR mode: print only the true creator.
-//                         list mode: show only PRs the session created.
-//        -a / --all       list mode: also list sessions with no tracked PRs
-//                         (hidden by default).
-//        --exited         list mode: also include exited (no longer running)
-//                         sessions, shown with an "exited" status.
-//        --status         list mode: annotate each PR with live GitHub state
-//                         (OPEN/MERGED/CLOSED, draft, checks, review) via `gh`.
-//        --url            print raw PR URLs instead of terminal hyperlinks.
-//        --full-uuid      show the full session UUID (default: 8-char prefix).
-//        --color/--no-color  force or disable ANSI color (default: auto).
-//        --resume-links/--no-resume-links  make each session name/uuid a
-//                         clickable resume link (auto-on under WezTerm on a TTY;
-//                         needs an open-uri handler in the wezterm config).
-//        -h / --help      show usage and exit.
+//
+//	-c / --creator   PR mode: print only the true creator.
+//	                 list mode: show only PRs the session created.
+//	-a / --all       list mode: also list sessions with no tracked PRs
+//	                 (hidden by default).
+//	--exited         list mode: also include exited (no longer running)
+//	                 sessions, shown with an "exited" status.
+//	--status         list mode: annotate each PR with live GitHub state
+//	                 (OPEN/MERGED/CLOSED, draft, checks, review) via `gh`.
+//	--url            print raw PR URLs instead of terminal hyperlinks.
+//	--full-uuid      show the full session UUID (default: 8-char prefix).
+//	--color/--no-color  force or disable ANSI color (default: auto).
+//	--resume-links/--no-resume-links  make each session name/uuid a
+//	                 clickable resume link (auto-on under WezTerm on a TTY;
+//	                 needs an open-uri handler in the wezterm config).
+//	-h / --help      show usage and exit.
 package main
 
 import (
