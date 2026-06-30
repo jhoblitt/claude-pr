@@ -1,32 +1,28 @@
-// claude-pr reverse-maps a GitHub PR number to the Claude Code session(s)
-// responsible for it, by scanning local session transcripts (JSONL).
+// claude-pr maps a GitHub PR to the Claude Code session(s) that reference it,
+// and lists the live sessions and the PRs each is tracking.
 //
-// A PR is created by `gh pr create`, whose stdout includes the new PR URL on its
-// own line, recorded as a Bash tool_result in the transcript. The CREATOR is the
-// session that actually *invokes* `gh pr create` (the command, not the string in
-// some echo/comment) and whose result carries that URL line; sessions that only
-// edited/readied/viewed/mentioned the PR are "touched". Earliest timestamp wins.
+// Given a PR reference — bare "1234", "#1234", or a PR URL — it reports only the
+// session(s) whose tracked PRs (from "pr-link" records) include that PR. A PR is
+// flagged "(created)" for a session when that session actually invoked
+// `gh pr create` for it (detected from the command, not a mention) and its
+// result carried the bare PR URL.
 //
-// Session identity is shown as the /rename title when one exists (from
-// "custom-title" records), with the UUID in brackets, else just the UUID.
-//
-// With no PR number, it lists the currently-live sessions (from the daemon's
+// With no PR argument, it lists the currently-live sessions (from the daemon's
 // sessions/ registry, process still running) as aligned columns —
 // name · uuid · cwd · status — each followed by a tree of the PRs it is tracking
 // (from "pr-link" records), with created PRs flagged. Each PR id is a clickable
-// terminal hyperlink (OSC 8) to the PR. Output is colored when stdout is a TTY
-// (honoring NO_COLOR); unnamed sessions show "(unnamed)".
+// terminal hyperlink (OSC 8) to the PR. Session identity shows the /rename title
+// when set, else the UUID; output is colored on a TTY (honoring NO_COLOR);
+// unnamed sessions show "(unnamed)".
 //
-// Usage: claude-pr [flags] [<PR_NUMBER> [owner/repo]]
+// Usage: claude-pr [flags] [<PR>]   (<PR>: 1234, #1234, or a github.com PR URL)
 //
-//	-c / --creator   PR mode: print only the true creator.
-//	                 list mode: show only PRs the session created.
-//	-a / --all       list mode: also list sessions with no tracked PRs
-//	                 (hidden by default).
-//	--exited         list mode: also include exited (no longer running)
-//	                 sessions, shown with an "exited" status.
-//	--status         list mode: annotate each PR with live GitHub state
-//	                 (OPEN/MERGED/CLOSED, draft, checks, review) via `gh`.
+//	-c / --creator   show only PRs/sessions where the session created the PR.
+//	-a / --all       list mode: also list sessions with no tracked PRs.
+//	--exited         report/list exited (no-longer-running) sessions too,
+//	                 shown with an "exited" status.
+//	--status         annotate each PR with live GitHub state (OPEN/MERGED/
+//	                 CLOSED, draft, checks, review) via `gh`.
 //	--url            print raw PR URLs instead of terminal hyperlinks.
 //	--full-uuid      show the full session UUID (default: 8-char prefix).
 //	--color/--no-color  force or disable ANSI color (default: auto).
@@ -78,6 +74,36 @@ var reCreate = regexp.MustCompile("(?m)(^|[;&|(){}\n`])[ \t]*gh pr create([ \t]|
 
 // rePRURL captures (owner/repo, number) from a GitHub PR URL alone on a line.
 var rePRURL = regexp.MustCompile(`(?m)^https?://github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)[ \t]*\r?$`)
+
+// rePRArgURL parses a full GitHub PR URL passed as the CLI argument.
+var rePRArgURL = regexp.MustCompile(`^https?://github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)(?:[/?#].*)?$`)
+
+// prQuery filters the listing to sessions referencing a specific PR.
+type prQuery struct {
+	repo string // "" matches any owner/repo
+	num  int
+}
+
+// parsePRArg parses a PR reference: bare "1234", "#1234", or a full PR URL.
+// repo is "" unless a URL supplied one.
+func parsePRArg(s string) (repo string, num int, ok bool) {
+	s = strings.TrimSpace(s)
+	if m := rePRArgURL.FindStringSubmatch(s); m != nil {
+		n, err := strconv.Atoi(m[2])
+		return m[1], n, err == nil
+	}
+	s = strings.TrimPrefix(s, "#")
+	if s == "" {
+		return "", 0, false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return "", 0, false
+		}
+	}
+	n, err := strconv.Atoi(s)
+	return "", n, err == nil
+}
 
 var (
 	colorEnabled bool
@@ -307,139 +333,6 @@ func discoverRoots() []string {
 		}
 	}
 	return roots
-}
-
-// sessionLoc describes where a transcript sits: the owning session UUID, the
-// project, an optional subagent suffix, and the transcript to read the /rename
-// title from (the parent session for subagent transcripts).
-type sessionLoc struct {
-	uuid, proj, suffix, titleFile string
-}
-
-func resolveLoc(path string) sessionLoc {
-	if i := strings.Index(path, "/subagents/"); i >= 0 {
-		sessDir := path[:i]
-		agent := strings.TrimSuffix(filepath.Base(path), ".jsonl")
-		return sessionLoc{
-			uuid:      filepath.Base(sessDir),
-			proj:      filepath.Base(filepath.Dir(sessDir)),
-			suffix:    " (subagent " + agent + ")",
-			titleFile: sessDir + ".jsonl",
-		}
-	}
-	return sessionLoc{
-		uuid:      strings.TrimSuffix(filepath.Base(path), ".jsonl"),
-		proj:      filepath.Base(filepath.Dir(path)),
-		titleFile: path,
-	}
-}
-
-type result struct {
-	line    string
-	created bool
-}
-
-// scanFile returns the output line for one transcript, whether the session truly
-// created the PR, and ok=false if the PR's URL never appears as a bare-line
-// tool_result there.
-func scanFile(data []byte, reLine *regexp.Regexp, path string) (result, bool) {
-	cmdByID := map[string]string{}
-	type match struct{ ts, toolUseID string }
-	var matches []match
-
-	for _, raw := range bytes.Split(data, []byte("\n")) {
-		raw = bytes.TrimSpace(raw)
-		if len(raw) == 0 {
-			continue
-		}
-		var rec record
-		if json.Unmarshal(raw, &rec) != nil || rec.Message == nil {
-			continue
-		}
-		var items []contentItem
-		if json.Unmarshal(rec.Message.Content, &items) != nil {
-			continue
-		}
-		for _, it := range items {
-			switch it.Type {
-			case "tool_use":
-				if it.Name == "Bash" && it.ID != "" && it.Input != nil {
-					cmdByID[it.ID] = it.Input.Command
-				}
-			case "tool_result":
-				if reLine.MatchString(resultText(it.Content)) {
-					ts := rec.Timestamp
-					if ts == "" {
-						ts = "?"
-					}
-					matches = append(matches, match{ts, it.ToolUseID})
-				}
-			}
-		}
-	}
-	if len(matches) == 0 {
-		return result{}, false
-	}
-	minTS := matches[0].ts
-	created := false
-	for _, m := range matches {
-		if m.ts < minTS {
-			minTS = m.ts
-		}
-		if reCreate.MatchString(cmdByID[m.toolUseID]) {
-			created = true
-		}
-	}
-
-	loc := resolveLoc(path)
-	title := latestCustomTitle(data)
-	if loc.titleFile != path {
-		if pdata, err := os.ReadFile(loc.titleFile); err == nil {
-			title = latestCustomTitle(pdata)
-		}
-	}
-	sid := loc.uuid
-	if title != "" {
-		sid = title + " [" + loc.uuid + "]"
-	}
-	sid += loc.suffix
-
-	status := "touched "
-	if created {
-		status = "CREATOR "
-	}
-	return result{line: status + minTS + "  " + sid + "  (" + loc.proj + ")", created: created}, true
-}
-
-func runPRMode(pos []string, creatorOnly bool, roots []string) {
-	pr := pos[0]
-	slug := `[^/\s]+/[^/\s]+`
-	if len(pos) > 1 && pos[1] != "" {
-		slug = regexp.QuoteMeta(pos[1])
-	}
-	reLine := regexp.MustCompile(`(?m)^https?://github\.com/` + slug + `/pull/` + regexp.QuoteMeta(pr) + `[ \t]*\r?$`)
-	prefilter := []byte("/pull/" + pr)
-
-	var lines []string
-	for _, root := range roots {
-		_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".jsonl") {
-				return nil
-			}
-			data, err := os.ReadFile(p)
-			if err != nil || !bytes.Contains(data, prefilter) {
-				return nil
-			}
-			if res, ok := scanFile(data, reLine, p); ok && (!creatorOnly || res.created) {
-				lines = append(lines, res.line)
-			}
-			return nil
-		})
-	}
-	sort.Strings(lines)
-	for _, l := range lines {
-		fmt.Println(l)
-	}
 }
 
 // --- list mode (no PR argument) ---
@@ -716,7 +609,7 @@ func fetchStatuses(prs []prRef) map[string]string {
 	return out
 }
 
-func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, roots []string) {
+func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, filter *prQuery, roots []string) {
 	idx := transcriptIndex(roots)
 	sessions := readSessions(roots)
 	if includeExited {
@@ -758,7 +651,18 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, roots [
 			}
 			prs = only
 		}
-		if len(prs) == 0 && !showEmpty {
+		if filter != nil {
+			var matched []prRef
+			for _, p := range prs {
+				if p.num == filter.num && (filter.repo == "" || p.repo == filter.repo) {
+					matched = append(matched, p)
+				}
+			}
+			prs = matched
+			if len(prs) == 0 {
+				continue
+			}
+		} else if len(prs) == 0 && !showEmpty {
 			continue
 		}
 		st := s.Status
@@ -789,6 +693,15 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, roots [
 		}
 		return rows[i].uuid < rows[j].uuid
 	})
+
+	if filter != nil && len(rows) == 0 {
+		hint := ""
+		if !includeExited {
+			hint = " (use --exited to include exited sessions)"
+		}
+		fmt.Fprintln(os.Stderr, "claude-pr: no session references that PR"+hint)
+		return
+	}
 
 	statusByKey := map[string]string{}
 	if showStatus {
@@ -1028,15 +941,15 @@ func printUsage() {
 	fmt.Print(`claude-pr — map GitHub PRs to the Claude Code sessions responsible for them.
 
 Usage:
-  claude-pr [flags] [<PR_NUMBER> [owner/repo]]
+  claude-pr [flags] [<PR>]            # <PR>: 1234, #1234, or a github.com PR URL
 
 Modes:
-  with a PR number   show which session(s) created or merely touched that PR.
+  with a PR ref      report only the session(s) referencing that PR (live by
+                     default; add --exited to include exited sessions).
   no arguments       list currently-live sessions and the PRs each is tracking.
 
 Flags:
-  -c, --creator    PR mode: print only the true creator.
-                   list mode: show only PRs the session created.
+  -c, --creator    show only PRs/sessions where the session created the PR.
   -a, --all        list mode: also show sessions with no tracked PRs.
       --exited     list mode: also include exited (no longer running) sessions,
                    shown with an "exited" status.
@@ -1056,10 +969,12 @@ Flags:
   -h, --help       show this help and exit.
 
 Examples:
-  claude-pr 17801           which session created PR #17801
-  claude-pr -c 17801        just the creator
-  claude-pr                 live sessions and the PRs they track
-  claude-pr --all --status  include empty sessions, with live PR state
+  claude-pr 17801             live sessions referencing PR #17801
+  claude-pr '#17801'          same; quote the # so the shell keeps it
+  claude-pr <pr-url>          match the exact owner/repo + PR from a URL
+  claude-pr 17801 --exited    include exited sessions too
+  claude-pr -c 17801          only sessions that created it
+  claude-pr                   all live sessions and the PRs they track
 
 Sessions are read read-only from $CLAUDE_CONFIG_DIR (falling back to
 ~/.claude-personal, ~/.claude, ~/.config/claude). Liveness uses /proc (Linux);
@@ -1135,12 +1050,14 @@ func main() {
 		os.Exit(2)
 	}
 
-	if len(pos) == 0 {
-		runListMode(creatorOnly, showStatus, showEmpty, includeExited, roots)
-		return
+	var filter *prQuery
+	if len(pos) > 0 {
+		repo, num, ok := parsePRArg(pos[0])
+		if !ok {
+			fmt.Fprintln(os.Stderr, "claude-pr: not a PR reference (use 1234, #1234, or a PR URL): "+pos[0])
+			os.Exit(2)
+		}
+		filter = &prQuery{repo: repo, num: num}
 	}
-	if showStatus {
-		fmt.Fprintln(os.Stderr, "claude-pr: --status applies to list mode (no PR argument); ignoring")
-	}
-	runPRMode(pos, creatorOnly, roots)
+	runListMode(creatorOnly, showStatus, showEmpty, includeExited, filter, roots)
 }

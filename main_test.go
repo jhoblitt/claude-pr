@@ -5,6 +5,34 @@ import (
 	"testing"
 )
 
+func TestParsePRArg(t *testing.T) {
+	type want struct {
+		repo string
+		num  int
+		ok   bool
+	}
+	cases := map[string]want{
+		"1234":      {"", 1234, true},
+		"#1234":     {"", 1234, true},
+		"  #1234  ": {"", 1234, true},
+		"https://github.com/rook/rook/pull/17801": {"rook/rook", 17801, true},
+		"http://github.com/o/r/pull/5":            {"o/r", 5, true},
+		"https://github.com/o/r/pull/5/files":     {"o/r", 5, true},
+		"https://github.com/o/r/pull/5?x=1":       {"o/r", 5, true},
+		"":                                        {"", 0, false},
+		"#":                                       {"", 0, false},
+		"12a":                                     {"", 0, false},
+		"not-a-pr":                                {"", 0, false},
+		"https://gitlab.com/o/r/pull/5":           {"", 0, false},
+	}
+	for in, w := range cases {
+		repo, num, ok := parsePRArg(in)
+		if repo != w.repo || num != w.num || ok != w.ok {
+			t.Errorf("parsePRArg(%q) = (%q,%d,%v), want (%q,%d,%v)", in, repo, num, ok, w.repo, w.num, w.ok)
+		}
+	}
+}
+
 func TestPctEncode(t *testing.T) {
 	cases := map[string]string{
 		"/home/jhoblitt/.claude-personal": "%2Fhome%2Fjhoblitt%2F.claude-personal",

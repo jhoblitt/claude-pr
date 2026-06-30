@@ -17,21 +17,28 @@ records). `claude-pr` reads those transcripts (read-only) to answer two question
 ## Usage
 
 ```
-claude-pr [flags] [<PR_NUMBER> [owner/repo]]
+claude-pr [flags] [<PR>]     # <PR>: 1234, #1234, or a github.com PR URL
 ```
 
-### PR mode — who created a PR
+### Reverse lookup — which sessions reference a PR
+
+Give a PR as a bare number, `#`-prefixed, or a full URL, and `claude-pr` reports
+only the session(s) referencing it, in the same row format as the list below:
 
 ```
 $ claude-pr 17801
-CREATOR 2026-06-22T21:56:30.590Z  ci-loop-to-iscsi [724ceb21-...]  (-home-jhoblitt-github-rook7)
+claude-pr         8ffe82dd  ~/github/rook7  busy
+  └ rook/rook#17801
+
+$ claude-pr 17801 --exited
+ci-loop-to-iscsi  724ceb21  ~/github/rook7  exited
+  └ rook/rook#17801  (created)
 ```
 
-The CREATOR is the session that actually invoked `gh pr create` for that PR
-(detected from the command, not a mention) and whose result carried the PR URL.
-Sessions that only edited/viewed/referenced it are reported as `touched`.
-
-- `-c`, `--creator` — print only the true creator.
+Accepts `1234`, `#1234` (quote it as `'#1234'` so the shell doesn't treat it as a
+comment), or `https://github.com/<owner>/<repo>/pull/1234` (a URL also pins the
+owner/repo). Live sessions only by default; add `--exited` to include exited
+ones, and `-c`/`--creator` to show only sessions that *created* the PR.
 
 ### List mode — what live sessions are tracking
 
