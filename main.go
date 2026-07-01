@@ -9,28 +9,13 @@
 //
 // With no PR argument, it lists the currently-live sessions (from the daemon's
 // sessions/ registry, process still running) as aligned columns —
-// name · uuid · cwd · status — each followed by a tree of the PRs it is tracking
-// (from "pr-link" records), with created PRs flagged. Each PR id is a clickable
-// terminal hyperlink (OSC 8) to the PR. Session identity shows the /rename title
-// when set, else the UUID; output is colored on a TTY (honoring NO_COLOR);
-// unnamed sessions show "(unnamed)".
+// name · uuid · cwd · status — each followed by a tree of the PRs it is
+// tracking, with created PRs flagged and each PR id a clickable terminal
+// hyperlink (OSC 8). Session identity shows the /rename title when set, else
+// the UUID; output is colored on a TTY (honoring NO_COLOR).
 //
-// Usage: claude-pr [flags] [<PR>]   (<PR>: 1234, #1234, or a github.com PR URL)
-//
-//	-c / --creator   show only PRs/sessions where the session created the PR.
-//	-a / --all       list mode: also list sessions with no tracked PRs.
-//	--exited         report/list exited (no-longer-running) sessions too,
-//	                 shown with an "exited" status.
-//	--status         annotate each PR with live GitHub state (OPEN/MERGED/
-//	                 CLOSED, draft, checks, review) via `gh`.
-//	-o / --open      keep only OPEN PRs (draft or not); implies --status.
-//	--url            print raw PR URLs instead of terminal hyperlinks.
-//	--full-uuid      show the full session UUID (default: 8-char prefix).
-//	--color/--no-color  force or disable ANSI color (default: auto).
-//	--resume-links/--no-resume-links  make each session name/uuid a
-//	                 clickable resume link (auto-on under WezTerm on a TTY;
-//	                 needs an open-uri handler in the wezterm config).
-//	-h / --help      show usage and exit.
+// Run `claude-pr --help` for flags and examples; the README covers the
+// WezTerm resume-link integration.
 package main
 
 import (
@@ -94,10 +79,10 @@ Modes:
 Flags:
   -c, --creator    show only PRs/sessions where the session created the PR.
   -a, --all        list mode: also show sessions with no tracked PRs.
-      --exited     list mode: also include exited (no longer running) sessions,
-                   shown with an "exited" status.
-      --status     list mode: annotate each PR with live GitHub state
-                   (OPEN/MERGED/CLOSED, draft, checks, review) via gh.
+      --exited     also include exited (no longer running) sessions, shown
+                   with an "exited" status.
+      --status     annotate each PR with live GitHub state (OPEN/MERGED/
+                   CLOSED, draft, checks, review) via gh.
   -o, --open       keep only OPEN PRs (draft or not); implies --status. Drops
                    merged, closed, and unresolved PRs, and any session left
                    with no open PR. Needs the gh CLI.
@@ -123,9 +108,15 @@ Examples:
   claude-pr                   all live sessions and the PRs they track
   claude-pr -o                only sessions with an open PR (draft or not)
 
+Exit status:
+  0  normal output (list rendered, or the lookup matched)
+  1  no match: the lookup found no session, or --open filtered everything out
+  2  usage error
+
 Sessions are read read-only from $CLAUDE_CONFIG_DIR (falling back to
-~/.claude-personal, ~/.claude, ~/.config/claude). Liveness uses /proc (Linux);
---status needs the gh CLI authenticated.
+~/.claude-personal, ~/.claude, ~/.config/claude). Liveness is probed with
+kill(2), so it needs to run where it can see the session processes; --status
+needs the gh CLI authenticated.
 `)
 }
 
