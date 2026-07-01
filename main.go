@@ -51,12 +51,14 @@ type prQuery struct {
 }
 
 // parsePRArg parses a PR reference: bare "1234", "#1234", or a full PR URL.
-// repo is "" unless a URL supplied one.
+// repo is "" unless a URL supplied one. PR numbers start at 1.
 func parsePRArg(s string) (repo string, num int, ok bool) {
 	s = strings.TrimSpace(s)
 	if m := rePRArgURL.FindStringSubmatch(s); m != nil {
-		n, err := strconv.Atoi(m[2])
-		return m[1], n, err == nil
+		if n, err := strconv.Atoi(m[2]); err == nil && n > 0 {
+			return m[1], n, true
+		}
+		return "", 0, false
 	}
 	s = strings.TrimPrefix(s, "#")
 	if s == "" {
@@ -67,8 +69,10 @@ func parsePRArg(s string) (repo string, num int, ok bool) {
 			return "", 0, false
 		}
 	}
-	n, err := strconv.Atoi(s)
-	return "", n, err == nil
+	if n, err := strconv.Atoi(s); err == nil && n > 0 {
+		return "", n, true
+	}
+	return "", 0, false
 }
 
 func isTTY(f *os.File) bool {
@@ -166,8 +170,16 @@ func main() {
 		case "--no-resume-links":
 			resumeMode = "never"
 		default:
+			if strings.HasPrefix(a, "-") && a != "-" {
+				fmt.Fprintln(os.Stderr, "claude-pr: unknown flag: "+a+" (see --help)")
+				os.Exit(2)
+			}
 			pos = append(pos, a)
 		}
+	}
+	if len(pos) > 1 {
+		fmt.Fprintln(os.Stderr, "claude-pr: expected at most one PR reference, got: "+strings.Join(pos, " "))
+		os.Exit(2)
 	}
 	tty := isTTY(os.Stdout)
 	switch colorMode {
@@ -209,5 +221,7 @@ func main() {
 		}
 		filter = &prQuery{repo: repo, num: num}
 	}
-	runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly, filter, roots)
+	if code := runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly, filter, roots); code != 0 {
+		os.Exit(code)
+	}
 }

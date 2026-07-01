@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -15,14 +14,7 @@ type regSession struct {
 	Cwd       string `json:"cwd"`
 	Pid       int    `json:"pid"`
 	Alive     bool   `json:"-"`
-}
-
-func pidAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	_, err := os.Stat("/proc/" + strconv.Itoa(pid))
-	return err == nil
+	CfgDir    string `json:"-"` // config dir whose registry listed the session
 }
 
 // readSessions returns the running sessions from each config's sessions/
@@ -32,7 +24,8 @@ func readSessions(roots []string) []regSession {
 	bySID := map[string]regSession{}
 	seenDir := map[string]bool{}
 	for _, root := range roots {
-		dir := filepath.Join(filepath.Dir(root), "sessions")
+		cfgDir := filepath.Dir(root)
+		dir := filepath.Join(cfgDir, "sessions")
 		if seenDir[dir] {
 			continue
 		}
@@ -54,6 +47,7 @@ func readSessions(roots []string) []regSession {
 				continue
 			}
 			s.Alive = true
+			s.CfgDir = cfgDir
 			if _, ok := bySID[s.SessionID]; !ok {
 				bySID[s.SessionID] = s
 			}

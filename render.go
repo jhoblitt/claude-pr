@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -86,9 +87,16 @@ func col(style, s string) string {
 	return style + s + cReset
 }
 
+// visWidth is a cell's visible width in columns: rune count, not byte count,
+// since names and paths need not be ASCII. (East-Asian double-width glyphs
+// would need a width table; not worth a dependency here.)
+func visWidth(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
 // field left-pads s to visible width w (measured plain), then styles the cell.
 func field(s string, w int, style string) string {
-	if pad := w - len([]rune(s)); pad > 0 {
+	if pad := w - visWidth(s); pad > 0 {
 		s += strings.Repeat(" ", pad)
 	}
 	return col(style, s)
@@ -170,7 +178,74 @@ func abbrevHome(p string) string {
 	return p
 }
 
-func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly bool, filter *prQuery, roots []string) {
+const unnamed = "(unnamed)"
+
+// row is one session line in the listing.
+type row struct {
+	name, uuid, cwdAbs, cfg, status string
+	prs                             []prRef
+}
+
+func (r row) displayName() string {
+	if r.name != "" {
+		return r.name
+	}
+	return unnamed
+}
+
+// rowLess orders sessions: most attention-seeking status first, then named
+// before unnamed, then by name, then by uuid.
+func rowLess(a, b row) bool {
+	if ra, rb := statusRank(a.status), statusRank(b.status); ra != rb {
+		return ra < rb
+	}
+	if ua, ub := a.name == "", b.name == ""; ua != ub {
+		return !ua
+	}
+	if na, nb := a.displayName(), b.displayName(); na != nb {
+		return na < nb
+	}
+	return a.uuid < b.uuid
+}
+
+// pruneOpen keeps only OPEN PRs in each row and drops rows left with none. It
+// also returns, sorted, "key: status" strings for PRs whose live state could
+// not be determined — those are excluded too, but the caller should say so
+// rather than let them vanish silently.
+func pruneOpen(rows []row, statusByKey map[string]string) ([]row, []string) {
+	unknown := map[string]bool{}
+	var kept []row
+	for _, r := range rows {
+		var open []prRef
+		for _, p := range r.prs {
+			st := statusByKey[prKey(p)]
+			switch {
+			case isOpenStatus(st):
+				open = append(open, p)
+			case st == "" || strings.HasPrefix(st, "status?"):
+				if st == "" {
+					st = "status unknown"
+				}
+				unknown[prKey(p)+": "+st] = true
+			}
+		}
+		if len(open) > 0 {
+			r.prs = open
+			kept = append(kept, r)
+		}
+	}
+	msgs := make([]string, 0, len(unknown))
+	for m := range unknown {
+		msgs = append(msgs, m)
+	}
+	sort.Strings(msgs)
+	return kept, msgs
+}
+
+// runListMode renders the session listing (optionally filtered to one PR) and
+// returns the process exit code: 0 on a match/normal listing, 1 when a lookup
+// or --open filter matched nothing.
+func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly bool, filter *prQuery, roots []string) int {
 	idx := transcriptIndex(roots)
 	sessions := readSessions(roots)
 	if includeExited {
@@ -185,10 +260,6 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 		}
 	}
 
-	type row struct {
-		name, uuid, cwdAbs, cfg, status string
-		prs                             []prRef
-	}
 	var rows []row
 	for _, s := range sessions {
 		var prs []prRef
@@ -199,10 +270,20 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 				prs = scanTracked(data)
 				if !s.Alive { // exited: registry is gone, so pull metadata from the transcript
 					name, cwd = latestCustomTitle(data), cwdFromTranscript(data)
+				} else {
+					if name == "" { // registry entries can lack the /rename title
+						name = latestCustomTitle(data)
+					}
+					if cwd == "" {
+						cwd = cwdFromTranscript(data)
+					}
 				}
 			}
 		}
 		cfg := cfgFromPath(tf)
+		if cfg == "" {
+			cfg = s.CfgDir // no transcript found; the registry knows the config dir
+		}
 		if creatorOnly {
 			var only []prRef
 			for _, p := range prs {
@@ -235,25 +316,7 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 		rows = append(rows, row{name, s.SessionID, cwd, cfg, st, prs})
 	}
 
-	const unnamed = "(unnamed)"
-	nameOf := func(r row) string {
-		if r.name != "" {
-			return r.name
-		}
-		return unnamed
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if ri, rj := statusRank(rows[i].status), statusRank(rows[j].status); ri != rj {
-			return ri < rj
-		}
-		if ui, uj := rows[i].name == "", rows[j].name == ""; ui != uj {
-			return !ui // named sessions before unnamed
-		}
-		if ni, nj := nameOf(rows[i]), nameOf(rows[j]); ni != nj {
-			return ni < nj
-		}
-		return rows[i].uuid < rows[j].uuid
-	})
+	sort.Slice(rows, func(i, j int) bool { return rowLess(rows[i], rows[j]) })
 
 	if filter != nil && len(rows) == 0 {
 		hint := ""
@@ -261,7 +324,7 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 			hint = " (use --exited to include exited sessions)"
 		}
 		fmt.Fprintln(os.Stderr, "claude-pr: no session references that PR"+hint)
-		return
+		return 1
 	}
 
 	statusByKey := map[string]string{}
@@ -269,7 +332,7 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 		if _, err := exec.LookPath("gh"); err != nil {
 			if openOnly {
 				fmt.Fprintln(os.Stderr, "claude-pr: --open needs the 'gh' CLI on PATH to determine PR state")
-				os.Exit(1)
+				return 1
 			}
 			fmt.Fprintln(os.Stderr, "claude-pr: --status needs the 'gh' CLI on PATH; skipping status")
 		} else {
@@ -277,8 +340,7 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 			var todo []prRef
 			for _, r := range rows {
 				for _, p := range r.prs {
-					k := fmt.Sprintf("%s#%d", p.repo, p.num)
-					if !seen[k] {
+					if k := prKey(p); !seen[k] {
 						seen[k] = true
 						todo = append(todo, p)
 					}
@@ -289,33 +351,23 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 	}
 
 	if openOnly {
-		var kept []row
-		for _, r := range rows {
-			var open []prRef
-			for _, p := range r.prs {
-				if isOpenStatus(statusByKey[fmt.Sprintf("%s#%d", p.repo, p.num)]) {
-					open = append(open, p)
+		var unknown []string
+		rows, unknown = pruneOpen(rows, statusByKey)
+		for _, u := range unknown {
+			fmt.Fprintln(os.Stderr, "claude-pr: --open: excluding "+u)
+		}
+		if len(rows) == 0 {
+			if filter != nil {
+				fmt.Fprintln(os.Stderr, "claude-pr: that PR is not open")
+			} else {
+				hint := ""
+				if !includeExited {
+					hint = " (use --exited to include exited sessions)"
 				}
+				fmt.Fprintln(os.Stderr, "claude-pr: no session has an open tracked PR"+hint)
 			}
-			if len(open) > 0 {
-				r.prs = open
-				kept = append(kept, r)
-			}
+			return 1
 		}
-		rows = kept
-	}
-
-	if openOnly && len(rows) == 0 {
-		if filter != nil {
-			fmt.Fprintln(os.Stderr, "claude-pr: that PR is not open")
-		} else {
-			hint := ""
-			if !includeExited {
-				hint = " (use --exited to include exited sessions)"
-			}
-			fmt.Fprintln(os.Stderr, "claude-pr: no session has an open tracked PR"+hint)
-		}
-		return
 	}
 
 	repos := map[string]bool{}
@@ -329,25 +381,25 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 		if singleRepo {
 			return "#" + strconv.Itoa(p.num)
 		}
-		return fmt.Sprintf("%s#%d", p.repo, p.num)
+		return prKey(p)
 	}
 	prURL := func(p prRef) string {
 		return fmt.Sprintf("https://github.com/%s/pull/%d", p.repo, p.num)
 	}
 
-	wName, wUUID, wCwd, wRef := len(unnamed), 0, 0, 0
+	wName, wUUID, wCwd, wRef := visWidth(unnamed), 0, 0, 0
 	for _, r := range rows {
-		if n := len(nameOf(r)); n > wName {
+		if n := visWidth(r.displayName()); n > wName {
 			wName = n
 		}
-		if n := len(uuidDisp(r.uuid)); n > wUUID {
+		if n := visWidth(uuidDisp(r.uuid)); n > wUUID {
 			wUUID = n
 		}
-		if n := len(abbrevHome(r.cwdAbs)); n > wCwd {
+		if n := visWidth(abbrevHome(r.cwdAbs)); n > wCwd {
 			wCwd = n
 		}
 		for _, p := range r.prs {
-			if n := len(refText(p)); n > wRef {
+			if n := visWidth(refText(p)); n > wRef {
 				wRef = n
 			}
 		}
@@ -361,14 +413,14 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 		if r.name == "" {
 			nameStyle = cDim
 		}
-		nameText, uuidText := nameOf(r), uuidDisp(r.uuid)
+		nameText, uuidText := r.displayName(), uuidDisp(r.uuid)
 		nameCell, uuidCell := col(nameStyle, nameText), col(cDim, uuidText)
 		if resumeLinks {
 			uri := resumeURI(r.uuid, r.cfg, r.cwdAbs)
 			nameCell, uuidCell = osc8(nameCell, uri), osc8(uuidCell, uri)
 		}
-		nameCell += strings.Repeat(" ", wName-len(nameText))
-		uuidCell += strings.Repeat(" ", wUUID-len(uuidText))
+		nameCell += strings.Repeat(" ", wName-visWidth(nameText))
+		uuidCell += strings.Repeat(" ", wUUID-visWidth(uuidText))
 		fmt.Printf("%s  %s  %s  %s\n",
 			nameCell,
 			uuidCell,
@@ -385,14 +437,14 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 				refStyle = cCyan + cUnderline
 			}
 			ref := link(col(refStyle, rt), prURL(p))
-			if pad := wRef - len(rt); pad > 0 {
+			if pad := wRef - visWidth(rt); pad > 0 {
 				ref += strings.Repeat(" ", pad)
 			}
 			line := "  " + col(cDim, conn) + " " + ref
 			if showRawURL {
 				line += "  " + col(cDim, prURL(p))
 			}
-			if st := statusByKey[fmt.Sprintf("%s#%d", p.repo, p.num)]; st != "" {
+			if st := statusByKey[prKey(p)]; st != "" {
 				line += "  [" + colorizePRStatus(st) + "]"
 			}
 			if p.created {
@@ -401,4 +453,5 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 			fmt.Println(line)
 		}
 	}
+	return 0
 }

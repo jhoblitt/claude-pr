@@ -107,7 +107,9 @@ end
 wezterm.on('open-uri', function(window, pane, uri)
   -- claude-resume://r/<id>/<urlencoded CLAUDE_CONFIG_DIR>/<urlencoded cwd>
   -- (path form: WezTerm won't click a ?query URI)
-  local id, cfg, cwd = uri:match('^claude%-resume://r/([^/]+)/([^/]+)/([^/]+)$')
+  -- id is spliced into a shell command below, so its pattern must stay
+  -- restricted to UUID characters — never widen it to [^/]+.
+  local id, cfg, cwd = uri:match('^claude%-resume://r/([%w%-]+)/([^/]+)/([^/]+)$')
   if id then
     window:perform_action(act.SpawnCommandInNewTab {
       cwd = urldecode(cwd), -- cwd makes --resume's project scope match

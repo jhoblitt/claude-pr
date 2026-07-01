@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -23,7 +24,9 @@ func weztermBlock() string {
   end
   wezterm.on('open-uri', function(window, pane, uri)
     -- claude-resume://r/<id>/<urlencoded CLAUDE_CONFIG_DIR>/<urlencoded cwd>
-    local id, cfg, cwd = uri:match('^claude%-resume://r/([^/]+)/([^/]+)/([^/]+)$')
+    -- id is spliced into a shell command below, so its pattern must stay
+    -- restricted to UUID characters — never widen it to [^/]+.
+    local id, cfg, cwd = uri:match('^claude%-resume://r/([%w%-]+)/([^/]+)/([^/]+)$')
     if id then
       wezterm.log_info('claude-pr: resume ' .. uri) -- visible in the debug overlay (Ctrl+Shift+L)
       window:perform_action(act.SpawnCommandInNewTab {
@@ -68,6 +71,10 @@ func weztermConfigPath() string {
 	return dotfile
 }
 
+// reTopReturn matches a column-0 `return` statement; a bare prefix test would
+// also match assignments like "returnvalue = 1".
+var reTopReturn = regexp.MustCompile(`^return\b`)
+
 // injectBlock returns content with the handler block inserted/replaced, and the
 // action taken. A marked block is replaced in place; otherwise the block is
 // inserted before the last top-level `return` (so it runs before the chunk
@@ -81,7 +88,7 @@ func injectBlock(content, block string) (string, string) {
 	lines := strings.Split(content, "\n")
 	insertAt := -1
 	for idx, ln := range lines {
-		if strings.HasPrefix(ln, "return") {
+		if reTopReturn.MatchString(ln) {
 			insertAt = idx
 		}
 	}

@@ -2,22 +2,36 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
+
+// statusTimeout bounds each `gh pr view` call so one hung network request
+// cannot wedge the whole listing.
+const statusTimeout = 30 * time.Second
 
 // fetchPRStatus returns a compact live status for a PR via `gh`, e.g.
 // "OPEN draft ✓57 ✗1 REVIEW_REQUIRED" or "MERGED ✓58", or "status? <reason>".
 func fetchPRStatus(repo string, num int) string {
-	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(num), "-R", repo,
+	ctx, cancel := context.WithTimeout(context.Background(), statusTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "view", strconv.Itoa(num), "-R", repo,
 		"--json", "state,isDraft,reviewDecision,statusCheckRollup")
+	// Killing gh at the deadline is not enough: a grandchild holding the
+	// stdout/stderr pipes would keep Wait blocked. WaitDelay force-closes them.
+	cmd.WaitDelay = 5 * time.Second
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "status? gh timed out"
+		}
 		msg := strings.TrimSpace(errb.String())
 		if i := strings.IndexByte(msg, '\n'); i >= 0 {
 			msg = msg[:i]
@@ -73,6 +87,11 @@ func fetchPRStatus(repo string, num int) string {
 	return strings.Join(parts, " ")
 }
 
+// prKey is the canonical "owner/repo#N" key for status maps and dedup.
+func prKey(p prRef) string {
+	return fmt.Sprintf("%s#%d", p.repo, p.num)
+}
+
 // fetchStatuses resolves status for each distinct PR concurrently (bounded).
 func fetchStatuses(prs []prRef) map[string]string {
 	out := map[string]string{}
@@ -87,7 +106,7 @@ func fetchStatuses(prs []prRef) map[string]string {
 			defer func() { <-sem }()
 			s := fetchPRStatus(p.repo, p.num)
 			mu.Lock()
-			out[fmt.Sprintf("%s#%d", p.repo, p.num)] = s
+			out[prKey(p)] = s
 			mu.Unlock()
 		}(p)
 	}
