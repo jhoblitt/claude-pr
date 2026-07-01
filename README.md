@@ -73,6 +73,12 @@ Flags:
   clickable link that resumes it (see [Resuming in WezTerm](#resuming-in-wezterm)).
   Auto-enabled when running under WezTerm on a TTY.
 
+### Exit status
+
+`0` normal output; `1` no match (a lookup found no session, or `--open`
+filtered everything out) — handy in scripts, e.g.
+`claude-pr -o 17801 && echo "still being worked on"`; `2` usage error.
+
 ## Resuming in WezTerm
 
 `claude --resume` only accepts a full session UUID or the exact session title,
@@ -92,7 +98,8 @@ claude-pr --install-wezterm
 This creates `~/.wezterm.lua` if you don't have one, or injects a
 marker-delimited handler block into your existing config (backing it up to
 `*.claude-pr.bak` first). It's idempotent — re-running updates the block in
-place. WezTerm auto-reloads on save.
+place. WezTerm auto-reloads on save. Re-run it after upgrading `claude-pr`:
+older handler blocks accepted a broader URI pattern than they should have.
 
 Or add the handler yourself:
 
@@ -107,7 +114,9 @@ end
 wezterm.on('open-uri', function(window, pane, uri)
   -- claude-resume://r/<id>/<urlencoded CLAUDE_CONFIG_DIR>/<urlencoded cwd>
   -- (path form: WezTerm won't click a ?query URI)
-  local id, cfg, cwd = uri:match('^claude%-resume://r/([^/]+)/([^/]+)/([^/]+)$')
+  -- id is spliced into a shell command below, so its pattern must stay
+  -- restricted to UUID characters — never widen it to [^/]+.
+  local id, cfg, cwd = uri:match('^claude%-resume://r/([%w%-]+)/([^/]+)/([^/]+)$')
   if id then
     window:perform_action(act.SpawnCommandInNewTab {
       cwd = urldecode(cwd), -- cwd makes --resume's project scope match
@@ -146,8 +155,10 @@ Bash tool call with the bare PR-URL line it printed; tracked PRs come from
 
 ## Notes / caveats
 
-- **Linux-specific liveness.** List mode decides which sessions are "live" by
-  checking `/proc/<pid>`, so it must run where it can see the host process table.
+- **Unix liveness.** List mode decides which sessions are "live" by probing
+  pids with `kill(2)` (signal 0), which works on Linux and macOS — but it must
+  run where it can see the session processes (not in a PID-namespaced sandbox).
 - **`--status` needs `gh`** authenticated; without it, listing still works.
+  Each status fetch is bounded to 30s so a hung `gh` can't wedge the listing.
 - The PR↔session creator match assumes a literal `gh pr create` invocation; a
   creator that wraps it behind a variable or unusual quoting may be missed.
