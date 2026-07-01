@@ -33,6 +33,21 @@ func TestParsePRArg(t *testing.T) {
 	}
 }
 
+func TestIsOpenStatus(t *testing.T) {
+	open := []string{"OPEN", "OPEN draft", "OPEN ✓5", "OPEN draft ✓57 ✗1 REVIEW_REQUIRED"}
+	notOpen := []string{"", "MERGED", "MERGED ✓58", "CLOSED", "status? not found", "OPENING"}
+	for _, s := range open {
+		if !isOpenStatus(s) {
+			t.Errorf("isOpenStatus(%q) = false, want true", s)
+		}
+	}
+	for _, s := range notOpen {
+		if isOpenStatus(s) {
+			t.Errorf("isOpenStatus(%q) = true, want false", s)
+		}
+	}
+}
+
 func TestPctEncode(t *testing.T) {
 	cases := map[string]string{
 		"/home/jhoblitt/.claude-personal": "%2Fhome%2Fjhoblitt%2F.claude-personal",

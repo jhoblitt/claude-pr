@@ -23,6 +23,7 @@
 //	                 shown with an "exited" status.
 //	--status         annotate each PR with live GitHub state (OPEN/MERGED/
 //	                 CLOSED, draft, checks, review) via `gh`.
+//	-o / --open      keep only OPEN PRs (draft or not); implies --status.
 //	--url            print raw PR URLs instead of terminal hyperlinks.
 //	--full-uuid      show the full session UUID (default: 8-char prefix).
 //	--color/--no-color  force or disable ANSI color (default: auto).
@@ -609,7 +610,14 @@ func fetchStatuses(prs []prRef) map[string]string {
 	return out
 }
 
-func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, filter *prQuery, roots []string) {
+// isOpenStatus reports whether a fetchPRStatus string denotes an OPEN PR (draft
+// or not). The state is the leading token; drafts render as "OPEN draft …", so a
+// prefix test excludes MERGED/CLOSED and the "status? …" error form.
+func isOpenStatus(s string) bool {
+	return s == "OPEN" || strings.HasPrefix(s, "OPEN ")
+}
+
+func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly bool, filter *prQuery, roots []string) {
 	idx := transcriptIndex(roots)
 	sessions := readSessions(roots)
 	if includeExited {
@@ -706,6 +714,10 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, filter 
 	statusByKey := map[string]string{}
 	if showStatus {
 		if _, err := exec.LookPath("gh"); err != nil {
+			if openOnly {
+				fmt.Fprintln(os.Stderr, "claude-pr: --open needs the 'gh' CLI on PATH to determine PR state")
+				os.Exit(1)
+			}
 			fmt.Fprintln(os.Stderr, "claude-pr: --status needs the 'gh' CLI on PATH; skipping status")
 		} else {
 			seen := map[string]bool{}
@@ -721,6 +733,36 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited bool, filter 
 			}
 			statusByKey = fetchStatuses(todo)
 		}
+	}
+
+	if openOnly {
+		var kept []row
+		for _, r := range rows {
+			var open []prRef
+			for _, p := range r.prs {
+				if isOpenStatus(statusByKey[fmt.Sprintf("%s#%d", p.repo, p.num)]) {
+					open = append(open, p)
+				}
+			}
+			if len(open) > 0 {
+				r.prs = open
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
+
+	if openOnly && len(rows) == 0 {
+		if filter != nil {
+			fmt.Fprintln(os.Stderr, "claude-pr: that PR is not open")
+		} else {
+			hint := ""
+			if !includeExited {
+				hint = " (use --exited to include exited sessions)"
+			}
+			fmt.Fprintln(os.Stderr, "claude-pr: no session has an open tracked PR"+hint)
+		}
+		return
 	}
 
 	repos := map[string]bool{}
@@ -955,6 +997,9 @@ Flags:
                    shown with an "exited" status.
       --status     list mode: annotate each PR with live GitHub state
                    (OPEN/MERGED/CLOSED, draft, checks, review) via gh.
+  -o, --open       keep only OPEN PRs (draft or not); implies --status. Drops
+                   merged, closed, and unresolved PRs, and any session left
+                   with no open PR. Needs the gh CLI.
       --url        print raw PR URLs instead of terminal hyperlinks.
       --full-uuid  show the full session UUID (default: 8-char prefix).
       --color      force ANSI color.
@@ -975,6 +1020,7 @@ Examples:
   claude-pr 17801 --exited    include exited sessions too
   claude-pr -c 17801          only sessions that created it
   claude-pr                   all live sessions and the PRs they track
+  claude-pr -o                only sessions with an open PR (draft or not)
 
 Sessions are read read-only from $CLAUDE_CONFIG_DIR (falling back to
 ~/.claude-personal, ~/.claude, ~/.config/claude). Liveness uses /proc (Linux);
@@ -987,6 +1033,7 @@ func main() {
 	showStatus := false
 	showEmpty := false
 	includeExited := false
+	openOnly := false
 	forceURL := false
 	colorMode := "auto"
 	resumeMode := "auto"
@@ -1007,6 +1054,8 @@ func main() {
 			includeExited = true
 		case "--status":
 			showStatus = true
+		case "-o", "--open":
+			openOnly = true
 		case "--url":
 			forceURL = true
 		case "--full-uuid":
@@ -1050,6 +1099,10 @@ func main() {
 		os.Exit(2)
 	}
 
+	if openOnly {
+		showStatus = true // --open needs the live state it filters on
+	}
+
 	var filter *prQuery
 	if len(pos) > 0 {
 		repo, num, ok := parsePRArg(pos[0])
@@ -1059,5 +1112,5 @@ func main() {
 		}
 		filter = &prQuery{repo: repo, num: num}
 	}
-	runListMode(creatorOnly, showStatus, showEmpty, includeExited, filter, roots)
+	runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly, filter, roots)
 }

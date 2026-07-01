@@ -38,7 +38,8 @@ ci-loop-to-iscsi  724ceb21  ~/github/rook7  exited
 Accepts `1234`, `#1234` (quote it as `'#1234'` so the shell doesn't treat it as a
 comment), or `https://github.com/<owner>/<repo>/pull/1234` (a URL also pins the
 owner/repo). Live sessions only by default; add `--exited` to include exited
-ones, and `-c`/`--creator` to show only sessions that *created* the PR.
+ones, and `-c`/`--creator` to show only sessions that *created* the PR. Adding
+`-o`/`--open` reports the match only when that PR is still open.
 
 ### List mode — what live sessions are tracking
 
@@ -61,6 +62,9 @@ Flags:
 - `-c`, `--creator` — show only the PRs each session created.
 - `--status` — annotate each PR with live GitHub state (OPEN/MERGED/CLOSED,
   draft, check counts, review decision) via the `gh` CLI.
+- `-o`, `--open` — keep only PRs that are OPEN (draft or not); implies
+  `--status`. Merged, closed, and unresolved PRs are dropped, along with any
+  session left with no open PR. Needs the `gh` CLI.
 - `--url` — print raw PR URLs instead of terminal hyperlinks.
 - `--full-uuid` — show the full session UUID (default: 8-char prefix).
 - `--color` / `--no-color` — force or disable ANSI color (default: auto; honors
