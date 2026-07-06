@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -21,15 +22,86 @@ func TestParsePRArg(t *testing.T) {
 		"https://github.com/o/r/pull/5?x=1":       {"o/r", 5, true},
 		"":                                        {"", 0, false},
 		"#":                                       {"", 0, false},
+		"0":                                       {"", 0, false},
+		"#0":                                      {"", 0, false},
 		"12a":                                     {"", 0, false},
 		"not-a-pr":                                {"", 0, false},
 		"https://gitlab.com/o/r/pull/5":           {"", 0, false},
+		"https://github.com/o/r/pull/0":           {"", 0, false},
 	}
 	for in, w := range cases {
 		repo, num, ok := parsePRArg(in)
 		if repo != w.repo || num != w.num || ok != w.ok {
 			t.Errorf("parsePRArg(%q) = (%q,%d,%v), want (%q,%d,%v)", in, repo, num, ok, w.repo, w.num, w.ok)
 		}
+	}
+}
+
+func TestPidAlive(t *testing.T) {
+	if !pidAlive(os.Getpid()) {
+		t.Error("pidAlive(self) = false, want true")
+	}
+	for _, pid := range []int{0, -1} {
+		if pidAlive(pid) {
+			t.Errorf("pidAlive(%d) = true, want false", pid)
+		}
+	}
+}
+
+func TestFieldUnicodePadding(t *testing.T) {
+	colorEnabled = false
+	if got := field("café", 6, ""); got != "café  " {
+		t.Errorf("field(café, 6) = %q, want %q", got, "café  ")
+	}
+	if got := visWidth("café"); got != 4 {
+		t.Errorf("visWidth(café) = %d, want 4", got)
+	}
+}
+
+func TestRowLess(t *testing.T) {
+	busy := row{name: "b", uuid: "1", status: "busy"}
+	idle := row{name: "a", uuid: "2", status: "idle"}
+	unnamedIdle := row{uuid: "3", status: "idle"}
+	idleB := row{name: "b", uuid: "4", status: "idle"}
+	cases := []struct {
+		a, b row
+		want bool
+		why  string
+	}{
+		{busy, idle, true, "busy before idle regardless of name"},
+		{idle, unnamedIdle, true, "named before unnamed at equal rank"},
+		{idle, idleB, true, "same rank sorts by name"},
+		{idleB, idle, false, "name order is asymmetric"},
+	}
+	for _, c := range cases {
+		if got := rowLess(c.a, c.b); got != c.want {
+			t.Errorf("rowLess: %s: got %v, want %v", c.why, got, c.want)
+		}
+	}
+}
+
+func TestPruneOpen(t *testing.T) {
+	open := prRef{repo: "o/r", num: 1}
+	merged := prRef{repo: "o/r", num: 2}
+	failed := prRef{repo: "o/r", num: 3}
+	rows := []row{
+		{name: "mixed", prs: []prRef{open, merged, failed}},
+		{name: "allmerged", prs: []prRef{merged}},
+	}
+	status := map[string]string{
+		"o/r#1": "OPEN draft ✓5",
+		"o/r#2": "MERGED ✓6",
+		"o/r#3": "status? HTTP 401",
+	}
+	kept, unknown := pruneOpen(rows, status)
+	if len(kept) != 1 || kept[0].name != "mixed" {
+		t.Fatalf("pruneOpen kept = %+v, want only the mixed row", kept)
+	}
+	if len(kept[0].prs) != 1 || kept[0].prs[0].num != 1 {
+		t.Errorf("kept prs = %+v, want only o/r#1", kept[0].prs)
+	}
+	if len(unknown) != 1 || unknown[0] != "o/r#3: status? HTTP 401" {
+		t.Errorf("unknown = %q, want the o/r#3 fetch failure", unknown)
 	}
 }
 
@@ -179,5 +251,25 @@ func TestInjectBlockIdempotent(t *testing.T) {
 	out2, _ := injectBlock(out1, block)
 	if out2 != out1 {
 		t.Error("re-injecting the same block is not idempotent")
+	}
+}
+
+func TestInjectBlockReturnMatching(t *testing.T) {
+	block := weztermBlock()
+
+	// "returnvalue = 1" is an assignment, not a return: with no real top-level
+	// return the block must be appended, not inserted before the assignment.
+	out, act := injectBlock("returnvalue = 1\n", block)
+	if act != "added" {
+		t.Fatalf("action = %q, want added", act)
+	}
+	if strings.Index(out, block) < strings.Index(out, "returnvalue = 1") {
+		t.Error("block must not be inserted before a non-return line")
+	}
+
+	// return{...} is a real return and must stay last.
+	out, _ = injectBlock("local config = {}\nreturn{}\n", block)
+	if strings.Index(out, block) > strings.Index(out, "return{}") {
+		t.Error("block must be inserted before a top-level return{}")
 	}
 }
