@@ -82,6 +82,7 @@ Flags:
   clickable link that resumes it (see [Resuming a session](#resuming-a-session)).
   Auto-enabled on a TTY under WezTerm, or once a `claude-resume://` handler is
   installed (`--install-url-handler`).
+- `--version` — print the `claude-pr` version and exit.
 
 ### Exit status
 
