@@ -68,7 +68,7 @@ Flags:
 - `--exited` — also include exited (no longer running) sessions, shown with an
   `exited` status (live sessions only by default).
 - `-c`, `--creator` — show only the PRs each session created.
-- `--status` — annotate each PR/MR with live state (OPEN/MERGED/CLOSED, draft,
+- `-s`, `--status` — annotate each PR/MR with live state (OPEN/MERGED/CLOSED, draft,
   checks, and for GitHub the review decision) — via the `gh` CLI for GitHub PRs
   and the [`glab`](https://gitlab.com/gitlab-org/cli) CLI for GitLab MRs.
 - `-o`, `--open` — keep only PRs/MRs that are OPEN (draft or not); implies
