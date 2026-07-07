@@ -176,6 +176,12 @@ register a `claude-resume://` handler manually (e.g. with a small
 
 ## Install
 
+Prebuilt binaries for Linux, macOS, and Windows (amd64/arm64) are attached to
+each [tagged release](https://github.com/jhoblitt/claude-pr/releases) — download
+the archive for your platform and drop `claude-pr` on your `PATH`.
+
+Or with the Go toolchain:
+
 ```
 go install github.com/jhoblitt/claude-pr@latest
 ```
