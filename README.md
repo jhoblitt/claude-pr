@@ -70,8 +70,9 @@ Flags:
 - `--color` / `--no-color` — force or disable ANSI color (default: auto; honors
   `NO_COLOR`).
 - `--resume-links` / `--no-resume-links` — make each session name/uuid a
-  clickable link that resumes it (see [Resuming in WezTerm](#resuming-in-wezterm)).
-  Auto-enabled when running under WezTerm on a TTY.
+  clickable link that resumes it (see [Resuming a session](#resuming-a-session)).
+  Auto-enabled on a TTY under WezTerm, or once a `claude-resume://` handler is
+  installed (`--install-url-handler`).
 
 ### Exit status
 
@@ -79,17 +80,24 @@ Flags:
 filtered everything out) — handy in scripts, e.g.
 `claude-pr -o 17801 && echo "still being worked on"`; `2` usage error.
 
-## Resuming in WezTerm
+## Resuming a session
 
 `claude --resume` only accepts a full session UUID or the exact session title,
 and it is scoped to the session's project directory — so the short ids in the
-listing can't be pasted into it directly. Under [WezTerm](https://wezterm.org),
-`claude-pr` instead makes each session's name and id a clickable hyperlink with a
-custom `claude-resume://` scheme that carries the full UUID and cwd. This is
-auto-enabled when WezTerm is detected (`$WEZTERM_PANE`) and stdout is a TTY.
+listing can't be pasted into it directly. Instead, `claude-pr` makes each
+session's name and id a clickable [OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda)
+hyperlink with a custom `claude-resume://` scheme that carries the full UUID,
+cwd, and `CLAUDE_CONFIG_DIR`. Something has to turn that click into a
+`claude --resume`; there are two ways to wire it up, depending on your terminal.
 
-For the click to resume the session, your WezTerm config needs an `open-uri`
-handler that turns the link into `claude --resume`. Install it automatically:
+Resume links are auto-enabled on a TTY when either handler is present: WezTerm is
+detected (`$WEZTERM_PANE`), or the `--install-url-handler` desktop entry exists.
+Force them with `--resume-links` (or off with `--no-resume-links`).
+
+### WezTerm — in-terminal `open-uri` hook
+
+[WezTerm](https://wezterm.org) can script link clicks, so it resumes the session
+in a **new tab of the current window** with no OS involvement. Install the hook:
 
 ```
 claude-pr --install-wezterm
@@ -130,6 +138,32 @@ end)
 
 Then Ctrl+Click (WezTerm's default link trigger) a session in the list to open
 `claude --resume` for it in a new tab. Without the handler the link is inert.
+
+### Other terminals — an OS-level URL handler
+
+Terminals that don't script link clicks — Ghostty, kitty, foot, Konsole, and
+others — hand an unknown OSC 8 scheme to the system opener (`xdg-open` /
+`open`). So instead of a terminal hook, you register `claude-resume://` with the
+OS once, and any such terminal will resume the session in a **new terminal
+window**:
+
+```
+claude-pr --install-url-handler
+```
+
+On Linux this writes a small wrapper script and an XDG desktop entry under
+`~/.local/share`, then points `xdg-mime` at it for `x-scheme-handler/claude-resume`.
+The wrapper opens the resume in whichever terminal you're using — detected at
+install time, and overridable at any time with `$CLAUDE_PR_RESUME_TERMINAL`
+(e.g. `CLAUDE_PR_RESUME_TERMINAL='kitty'`). Ctrl/Cmd+Click a session to resume
+it. This also works under WezTerm as a fallback; the `open-uri` hook above is
+just nicer there (new tab vs. new window).
+
+On macOS a custom scheme is routed through an app bundle (`CFBundleURLTypes`)
+rather than a config file, so `--install-url-handler` can't automate it yet;
+register a `claude-resume://` handler manually (e.g. with a small
+[Platypus](https://github.com/sveinbjornt/Platypus) app) that runs the same
+`claude --resume` command.
 
 ## Install
 

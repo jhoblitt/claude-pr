@@ -15,7 +15,8 @@
 // the UUID; output is colored on a TTY (honoring NO_COLOR).
 //
 // Run `claude-pr --help` for flags and examples; the README covers the
-// WezTerm resume-link integration.
+// resume-link integration (WezTerm's open-uri hook, or an OS-level
+// claude-resume:// handler for other terminals).
 package main
 
 import (
@@ -92,11 +93,17 @@ Flags:
       --no-color   disable ANSI color (default: auto; honors NO_COLOR).
       --resume-links / --no-resume-links
                    make each session name/uuid a clickable link that resumes it.
-                   Auto-on under WezTerm on a TTY; needs an open-uri handler in
-                   your wezterm config (see --install-wezterm).
+                   Auto-on on a TTY under WezTerm, or once a claude-resume://
+                   handler is installed (see --install-wezterm /
+                   --install-url-handler).
       --install-wezterm
                    create or update ~/.wezterm.lua with the open-uri handler
                    that makes the resume links work, then exit.
+      --install-url-handler
+                   register an OS-level claude-resume:// handler (Linux
+                   xdg-mime) so resume links work in Ghostty, kitty, and any
+                   terminal that defers unknown schemes to the system opener,
+                   then exit.
   -h, --help       show this help and exit.
 
 Examples:
@@ -138,6 +145,9 @@ func main() {
 			return
 		case "--install-wezterm":
 			installWezterm()
+			return
+		case "--install-url-handler":
+			installURLHandler()
 			return
 		case "-c", "--creator":
 			creatorOnly = true
@@ -189,9 +199,10 @@ func main() {
 		resumeLinks = true
 	case "never":
 		resumeLinks = false
-	default: // auto: on under WezTerm on a TTY (the open-uri handler turns the link into a resume)
+	default: // auto: on a TTY when a resume handler is likely present — WezTerm's
+		// open-uri hook, or an installed claude-resume:// URL handler.
 		wez := os.Getenv("WEZTERM_PANE") != "" || os.Getenv("TERM_PROGRAM") == "WezTerm"
-		resumeLinks = tty && wez && !forceURL
+		resumeLinks = tty && !forceURL && (wez || urlHandlerInstalled())
 	}
 
 	roots := discoverRoots()
