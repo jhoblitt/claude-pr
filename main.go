@@ -88,7 +88,7 @@ Flags:
   -a, --all        list mode: also show sessions with no tracked PRs.
       --exited     also include exited (no longer running) sessions, shown
                    with an "exited" status.
-      --status     annotate each PR/MR with live state (OPEN/MERGED/CLOSED,
+  -s, --status     annotate each PR/MR with live state (OPEN/MERGED/CLOSED,
                    draft, checks) via gh for GitHub, glab for GitLab.
   -o, --open       keep only OPEN PRs/MRs (draft or not); implies --status.
                    Drops merged, closed, and unresolved ones, and any session
@@ -161,7 +161,7 @@ func main() {
 			showEmpty = true
 		case "--exited":
 			includeExited = true
-		case "--status":
+		case "-s", "--status":
 			showStatus = true
 		case "-o", "--open":
 			openOnly = true
