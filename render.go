@@ -383,10 +383,6 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 		}
 		return prKey(p)
 	}
-	prURL := func(p prRef) string {
-		return fmt.Sprintf("https://github.com/%s/pull/%d", p.repo, p.num)
-	}
-
 	wName, wUUID, wCwd, wRef := visWidth(unnamed), 0, 0, 0
 	for _, r := range rows {
 		if n := visWidth(r.displayName()); n > wName {
@@ -436,13 +432,13 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 			if useHyperlink {
 				refStyle = cCyan + cUnderline
 			}
-			ref := link(col(refStyle, rt), prURL(p))
+			ref := link(col(refStyle, rt), p.webURL())
 			if pad := wRef - visWidth(rt); pad > 0 {
 				ref += strings.Repeat(" ", pad)
 			}
 			line := "  " + col(cDim, conn) + " " + ref
 			if showRawURL {
-				line += "  " + col(cDim, prURL(p))
+				line += "  " + col(cDim, p.webURL())
 			}
 			if st := statusByKey[prKey(p)]; st != "" {
 				line += "  [" + colorizePRStatus(st) + "]"

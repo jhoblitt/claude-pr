@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,7 @@ type record struct {
 	Timestamp    string `json:"timestamp"`
 	PrNumber     int    `json:"prNumber"`
 	PrRepository string `json:"prRepository"`
+	PrURL        string `json:"prUrl"` // full web URL; GitLab MRs carry a /-/merge_requests/ URL here
 	Message      *struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
@@ -106,19 +108,27 @@ func cfgFromPath(transcriptPath string) string {
 	return ""
 }
 
+// candidateProjectDirs lists the projects dirs to scan. CLAUDE_CONFIG_DIR, when
+// set, is authoritative — only its projects dir is scanned, matching how Claude
+// Code itself treats the var — so pointing it at a separate config (e.g. one for
+// an internal GitLab instance) does not bleed sessions from the default location
+// into the listing. When it is unset, Claude Code's documented default ~/.claude
+// applies.
+func candidateProjectDirs(cfgDir, home string) []string {
+	if cfgDir != "" {
+		return []string{filepath.Join(cfgDir, "projects")}
+	}
+	if home == "" {
+		return nil
+	}
+	return []string{filepath.Join(home, ".claude", "projects")}
+}
+
 func discoverRoots() []string {
-	var cands []string
-	if c := os.Getenv("CLAUDE_CONFIG_DIR"); c != "" {
-		cands = append(cands, filepath.Join(c, "projects"))
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		for _, d := range []string{".claude-personal/projects", ".claude/projects", ".config/claude/projects"} {
-			cands = append(cands, filepath.Join(home, d))
-		}
-	}
+	home, _ := os.UserHomeDir()
 	seen := map[string]bool{}
 	var roots []string
-	for _, c := range cands {
+	for _, c := range candidateProjectDirs(os.Getenv("CLAUDE_CONFIG_DIR"), home) {
 		abs, err := filepath.Abs(c)
 		if err != nil {
 			abs = c
@@ -156,6 +166,17 @@ type prRef struct {
 	repo    string
 	num     int
 	created bool
+	url     string // the web URL Claude Code recorded (empty for legacy/created-only refs)
+}
+
+// webURL is the PR/MR web address: the URL Claude Code recorded (which for a
+// GitLab MR is the correct /-/merge_requests/ link on its host), falling back to
+// a github.com/<repo>/pull/<n> reconstruction only when none was stored.
+func (p prRef) webURL() string {
+	if p.url != "" {
+		return p.url
+	}
+	return fmt.Sprintf("https://github.com/%s/pull/%d", p.repo, p.num)
 }
 
 // scanTracked returns the PRs a session references via "pr-link" records (its
@@ -165,8 +186,8 @@ func scanTracked(data []byte) []prRef {
 	cmdByID := map[string]string{}
 	type res struct{ tuid, txt string }
 	var results []res
-	tracked := map[string]bool{}
-	created := map[string]bool{}
+	trackedURL := map[string]string{} // key -> prUrl from the pr-link record
+	createdURL := map[string]string{} // key -> URL from a `gh pr create` result
 
 	for _, raw := range bytes.Split(data, []byte("\n")) {
 		raw = bytes.TrimSpace(raw)
@@ -178,7 +199,7 @@ func scanTracked(data []byte) []prRef {
 			continue
 		}
 		if rec.Type == "pr-link" && rec.PrRepository != "" && rec.PrNumber != 0 {
-			tracked[rec.PrRepository+"#"+strconv.Itoa(rec.PrNumber)] = true
+			trackedURL[rec.PrRepository+"#"+strconv.Itoa(rec.PrNumber)] = rec.PrURL
 		}
 		if rec.Message == nil {
 			continue
@@ -207,22 +228,27 @@ func scanTracked(data []byte) []prRef {
 			continue
 		}
 		for _, m := range rePRURL.FindAllStringSubmatch(r.txt, -1) {
-			created[m[1]+"#"+m[2]] = true
+			createdURL[m[1]+"#"+m[2]] = strings.TrimSpace(m[0])
 		}
 	}
 
 	keys := map[string]bool{}
-	for k := range tracked {
+	for k := range trackedURL {
 		keys[k] = true
 	}
-	for k := range created {
+	for k := range createdURL {
 		keys[k] = true
 	}
 	refs := make([]prRef, 0, len(keys))
 	for k := range keys {
 		i := strings.LastIndex(k, "#")
 		num, _ := strconv.Atoi(k[i+1:])
-		refs = append(refs, prRef{repo: k[:i], num: num, created: created[k]})
+		url := trackedURL[k]
+		if url == "" {
+			url = createdURL[k]
+		}
+		_, isCreated := createdURL[k]
+		refs = append(refs, prRef{repo: k[:i], num: num, created: isCreated, url: url})
 	}
 	sort.Slice(refs, func(i, j int) bool {
 		if refs[i].repo != refs[j].repo {
