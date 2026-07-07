@@ -67,14 +67,13 @@ func installURLHandlerLinux() {
 	appsDir := filepath.Join(data, "applications")
 	desktopPath := filepath.Join(appsDir, desktopFileName)
 
-	launch := terminalLaunchArgv()
 	for _, d := range []string{wrapperDir, appsDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			fmt.Fprintln(os.Stderr, "claude-pr: "+err.Error())
 			os.Exit(1)
 		}
 	}
-	if err := os.WriteFile(wrapperPath, []byte(resumeWrapperScript(launch)), 0o755); err != nil {
+	if err := os.WriteFile(wrapperPath, []byte(resumeWrapperScript()), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "claude-pr: "+err.Error())
 		os.Exit(1)
 	}
@@ -98,50 +97,14 @@ func installURLHandlerLinux() {
 	run("update-desktop-database", appsDir)
 
 	fmt.Println("claude-pr: registered the claude-resume:// handler.")
-	fmt.Printf("  wrapper: %s\n  desktop: %s\n  terminal: %s\n", wrapperPath, desktopPath, strings.Join(launch, " "))
+	fmt.Printf("  wrapper: %s\n  desktop: %s\n", wrapperPath, desktopPath)
 	fmt.Println("Ctrl/Cmd+Click a session in `claude-pr` to resume it in a new terminal window.")
-	fmt.Println("Override the terminal without reinstalling via $CLAUDE_PR_RESUME_TERMINAL.")
+	fmt.Println("The terminal is chosen at click time: $CLAUDE_PR_RESUME_TERMINAL, else the")
+	fmt.Println("terminal you clicked from (when it identifies itself), else your default.")
 }
 
-// terminalLaunchArgv is the argv prefix that runs a command in a new window of
-// the user's terminal (e.g. {"ghostty","-e"}). The handler is spawned by
-// xdg-open with no controlling terminal, so it must start one itself. The
-// current terminal is detected from its env markers, falling back to the first
-// known terminal on PATH.
-func terminalLaunchArgv() []string {
-	if s := os.Getenv("CLAUDE_PR_RESUME_TERMINAL"); s != "" {
-		return strings.Fields(s)
-	}
-	switch {
-	case os.Getenv("GHOSTTY_RESOURCES_DIR") != "" || os.Getenv("TERM_PROGRAM") == "ghostty":
-		return []string{"ghostty", "-e"}
-	case os.Getenv("WEZTERM_PANE") != "" || os.Getenv("TERM_PROGRAM") == "WezTerm":
-		return []string{"wezterm", "start", "--"}
-	case os.Getenv("KITTY_WINDOW_ID") != "" || os.Getenv("TERM") == "xterm-kitty":
-		return []string{"kitty"}
-	}
-	for _, t := range []struct {
-		bin  string
-		args []string
-	}{
-		{"ghostty", []string{"-e"}},
-		{"wezterm", []string{"start", "--"}},
-		{"kitty", nil},
-		{"foot", nil},
-		{"alacritty", []string{"-e"}},
-		{"gnome-terminal", []string{"--"}},
-		{"konsole", []string{"-e"}},
-		{"xterm", []string{"-e"}},
-	} {
-		if _, err := exec.LookPath(t.bin); err == nil {
-			return append([]string{t.bin}, t.args...)
-		}
-	}
-	return []string{"xterm", "-e"}
-}
-
-// shSingleQuote wraps s in single quotes safe for POSIX sh, so an argv element
-// embeds literally in the generated script regardless of its contents.
+// shSingleQuote wraps s in single quotes safe for POSIX sh, so a value embeds
+// literally in a generated script regardless of its contents.
 func shSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
@@ -150,15 +113,18 @@ func shSingleQuote(s string) string {
 // mirrors the WezTerm open-uri block: parse claude-resume://r/<id>/<enc cfg>/<enc
 // cwd>, keep <id> UUID-only (it is spliced into a command), then resume in a new
 // terminal window with the recorded cwd and CLAUDE_CONFIG_DIR.
-func resumeWrapperScript(launch []string) string {
-	quoted := make([]string, len(launch))
-	for i, a := range launch {
-		quoted[i] = shSingleQuote(a)
-	}
+//
+// The terminal is resolved at click time, not baked in at install: the
+// $CLAUDE_PR_RESUME_TERMINAL override, else the terminal the click came from
+// when it exports an identifying env var, else the user's default terminal.
+// (A terminal launched via the desktop portal — notably gnome-terminal — exports
+// nothing to the handler, so from it resolution falls through to the default.)
+func resumeWrapperScript() string {
 	return `#!/usr/bin/env bash
 # claude-pr resume handler — managed by ` + "`claude-pr --install-url-handler`" + `.
 # xdg-open runs this with a claude-resume://r/<id>/<enc cfg>/<enc cwd> URL and it
-# opens ` + "`claude --resume <id>`" + ` in a new terminal window.
+# opens ` + "`claude --resume <id>`" + ` in a new terminal window. The terminal is
+# chosen at click time (see resolve_term), not fixed when this file was written.
 set -euo pipefail
 
 uri=${1:-}
@@ -177,8 +143,52 @@ cfg=$(urldecode "$cfg_enc")
 cwd=$(urldecode "$cwd_enc")
 inner=$(printf 'cd %q && CLAUDE_CONFIG_DIR=%q exec claude --resume %q' "$cwd" "$cfg" "$id")
 
-term=(` + strings.Join(quoted, " ") + `)
-[ -n "${CLAUDE_PR_RESUME_TERMINAL:-}" ] && read -r -a term <<<"$CLAUDE_PR_RESUME_TERMINAL"
+# argv_for echoes the "run this command" argv for a terminal. They differ:
+# kitty/foot take the command as bare trailing args, wezterm needs "start --",
+# gnome-terminal needs "--", and the rest take "-e".
+argv_for() {
+  case $1 in
+    wezterm)                   echo wezterm start -- ;;
+    kitty | foot | footclient) echo "$1" ;;
+    gnome-terminal)            echo gnome-terminal -- ;;
+    *)                         echo "$1 -e" ;;
+  esac
+}
+
+# resolve_term selects the terminal at click time and stores its argv in "term".
+resolve_term() {
+  if [ -n "${CLAUDE_PR_RESUME_TERMINAL:-}" ]; then
+    read -r -a term <<<"$CLAUDE_PR_RESUME_TERMINAL"
+    return
+  fi
+  local bin=
+  if [ -n "${GHOSTTY_RESOURCES_DIR:-}" ] || [ "${TERM_PROGRAM:-}" = ghostty ]; then bin=ghostty
+  elif [ -n "${WEZTERM_PANE:-}" ] || [ "${TERM_PROGRAM:-}" = WezTerm ]; then bin=wezterm
+  elif [ -n "${KITTY_WINDOW_ID:-}" ] || [ "${TERM:-}" = xterm-kitty ]; then bin=kitty
+  elif [ -n "${FOOT_SOCK:-}" ] || [ "${TERM:-}" = foot ]; then bin=foot
+  elif [ -n "${ALACRITTY_WINDOW_ID:-}" ] || [ "${TERM:-}" = alacritty ]; then bin=alacritty
+  elif [ -n "${KONSOLE_VERSION:-}" ]; then bin=konsole
+  elif [ -n "${GNOME_TERMINAL_SCREEN:-}" ] || [ -n "${GNOME_TERMINAL_SERVICE:-}" ]; then bin=gnome-terminal
+  fi
+  if [ -n "$bin" ] && command -v "$bin" >/dev/null 2>&1; then
+    read -r -a term <<<"$(argv_for "$bin")"
+    return
+  fi
+  # No identifiable clicker: honor the user's default terminal, else the first
+  # known terminal on PATH.
+  if command -v xdg-terminal-exec >/dev/null 2>&1; then term=(xdg-terminal-exec); return; fi
+  local t
+  for t in ghostty wezterm kitty foot alacritty gnome-terminal konsole xterm; do
+    if command -v "$t" >/dev/null 2>&1; then
+      read -r -a term <<<"$(argv_for "$t")"
+      return
+    fi
+  done
+  term=(xterm -e)
+}
+
+term=()
+resolve_term
 exec "${term[@]}" bash -lc "$inner"
 `
 }

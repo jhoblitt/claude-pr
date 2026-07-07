@@ -163,11 +163,28 @@ claude-pr --install-url-handler
 
 On Linux this writes a small wrapper script and an XDG desktop entry under
 `~/.local/share`, then points `xdg-mime` at it for `x-scheme-handler/claude-resume`.
-The wrapper opens the resume in whichever terminal you're using — detected at
-install time, and overridable at any time with `$CLAUDE_PR_RESUME_TERMINAL`
-(e.g. `CLAUDE_PR_RESUME_TERMINAL='kitty'`). Ctrl/Cmd+Click a session to resume
-it. This also works under WezTerm as a fallback; the `open-uri` hook above is
-just nicer there (new tab vs. new window).
+Ctrl/Cmd+Click a session to resume it. This also works under WezTerm as a
+fallback; the `open-uri` hook above is just nicer there (new tab vs. new window).
+
+**Which terminal it opens** is resolved *at click time*, not fixed when you ran
+the install, in this order:
+
+1. `$CLAUDE_PR_RESUME_TERMINAL` if set — a full command prefix, e.g.
+   `CLAUDE_PR_RESUME_TERMINAL='gnome-terminal --'` or `'kitty'`.
+2. the terminal you clicked from, when it exports an identifying env var
+   (Ghostty, kitty, WezTerm, foot, Alacritty, Konsole, …).
+3. otherwise your default terminal (`xdg-terminal-exec` if present, else the
+   first known terminal on `PATH`).
+
+A caveat worth knowing: a terminal that opens the link through the desktop
+portal — **notably gnome-terminal** — hands the handler no environment or
+process trail identifying it, and Wayland won't reveal the focused window, so
+there is no reliable way to detect *that* you clicked from it. From such a
+terminal, resolution falls through to step 3 — so if it's your daily driver,
+pin it explicitly with `$CLAUDE_PR_RESUME_TERMINAL` (set it in
+`~/.config/environment.d/` so the portal-launched handler inherits it). For a
+terminal that can script its own link clicks, `--install-wezterm`-style hooks
+are the only way to reliably resume *in the same window*.
 
 On macOS a custom scheme is routed through an app bundle (`CFBundleURLTypes`)
 rather than a config file, so `--install-url-handler` can't automate it yet;
