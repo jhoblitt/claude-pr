@@ -111,6 +111,7 @@ Flags:
                    xdg-mime) so resume links work in Ghostty, kitty, and any
                    terminal that defers unknown schemes to the system opener,
                    then exit.
+      --version    print the claude-pr version and exit.
   -h, --help       show this help and exit.
 
 Examples:
@@ -149,6 +150,9 @@ func main() {
 		switch a {
 		case "-h", "--help":
 			printUsage()
+			return
+		case "--version":
+			printVersion()
 			return
 		case "--install-wezterm":
 			installWezterm()
