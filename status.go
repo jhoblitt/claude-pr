@@ -87,12 +87,27 @@ func fetchPRStatus(repo string, num int) string {
 	return strings.Join(parts, " ")
 }
 
-// prKey is the canonical "owner/repo#N" key for status maps and dedup.
+// prKey is the canonical "repo#N" key for status maps and dedup. It is an
+// internal key (always "#", never the "!" MR sigil); use displayRef for output.
 func prKey(p prRef) string {
 	return fmt.Sprintf("%s#%d", p.repo, p.num)
 }
 
-// fetchStatuses resolves status for each distinct PR concurrently (bounded).
+// cliOnPath reports whether a command is resolvable on PATH.
+func cliOnPath(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+// fetchStatus resolves one ref's live status via the provider's CLI.
+func fetchStatus(p prRef) string {
+	if p.isGitLab() {
+		return fetchMRStatus(p)
+	}
+	return fetchPRStatus(p.repo, p.num)
+}
+
+// fetchStatuses resolves status for each distinct PR/MR concurrently (bounded).
 func fetchStatuses(prs []prRef) map[string]string {
 	out := map[string]string{}
 	var mu sync.Mutex
@@ -104,7 +119,7 @@ func fetchStatuses(prs []prRef) map[string]string {
 		go func(p prRef) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s := fetchPRStatus(p.repo, p.num)
+			s := fetchStatus(p)
 			mu.Lock()
 			out[prKey(p)] = s
 			mu.Unlock()
