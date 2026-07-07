@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -226,7 +225,7 @@ func pruneOpen(rows []row, statusByKey map[string]string) ([]row, []string) {
 				if st == "" {
 					st = "status unknown"
 				}
-				unknown[prKey(p)+": "+st] = true
+				unknown[p.displayRef()+": "+st] = true
 			}
 		}
 		if len(open) > 0 {
@@ -329,25 +328,48 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 
 	statusByKey := map[string]string{}
 	if showStatus {
-		if _, err := exec.LookPath("gh"); err != nil {
-			if openOnly {
-				fmt.Fprintln(os.Stderr, "claude-pr: --open needs the 'gh' CLI on PATH to determine PR state")
-				return 1
-			}
-			fmt.Fprintln(os.Stderr, "claude-pr: --status needs the 'gh' CLI on PATH; skipping status")
-		} else {
-			seen := map[string]bool{}
-			var todo []prRef
-			for _, r := range rows {
-				for _, p := range r.prs {
-					if k := prKey(p); !seen[k] {
-						seen[k] = true
-						todo = append(todo, p)
-					}
+		// Each provider needs its own CLI: gh for GitHub PRs, glab for GitLab MRs.
+		needGH, needGL := false, false
+		for _, r := range rows {
+			for _, p := range r.prs {
+				if p.isGitLab() {
+					needGL = true
+				} else {
+					needGH = true
 				}
 			}
-			statusByKey = fetchStatuses(todo)
 		}
+		haveGH := !needGH || cliOnPath("gh")
+		haveGL := !needGL || cliOnPath("glab")
+		var missing []string
+		if needGH && !haveGH {
+			missing = append(missing, "gh")
+		}
+		if needGL && !haveGL {
+			missing = append(missing, "glab")
+		}
+		if len(missing) > 0 {
+			cli := strings.Join(missing, " and ")
+			if openOnly {
+				fmt.Fprintln(os.Stderr, "claude-pr: --open needs "+cli+" on PATH to determine PR state")
+				return 1
+			}
+			fmt.Fprintln(os.Stderr, "claude-pr: --status needs "+cli+" on PATH; those PRs will show no status")
+		}
+		seen := map[string]bool{}
+		var todo []prRef
+		for _, r := range rows {
+			for _, p := range r.prs {
+				if p.isGitLab() && !haveGL || !p.isGitLab() && !haveGH {
+					continue // its CLI is missing; leave the status blank
+				}
+				if k := prKey(p); !seen[k] {
+					seen[k] = true
+					todo = append(todo, p)
+				}
+			}
+		}
+		statusByKey = fetchStatuses(todo)
 	}
 
 	if openOnly {
@@ -379,9 +401,9 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 	singleRepo := len(repos) == 1
 	refText := func(p prRef) string {
 		if singleRepo {
-			return "#" + strconv.Itoa(p.num)
+			return p.sigil() + strconv.Itoa(p.num)
 		}
-		return prKey(p)
+		return p.displayRef()
 	}
 	wName, wUUID, wCwd, wRef := visWidth(unnamed), 0, 0, 0
 	for _, r := range rows {

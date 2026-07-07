@@ -2,28 +2,34 @@
 
 [![CI](https://github.com/jhoblitt/claude-pr/actions/workflows/ci.yml/badge.svg)](https://github.com/jhoblitt/claude-pr/actions/workflows/ci.yml)
 
-Reverse-map GitHub pull requests to the [Claude Code](https://claude.com/claude-code)
-sessions responsible for them, and see what PRs your live sessions are tracking.
+Reverse-map GitHub pull requests **and GitLab merge requests** to the
+[Claude Code](https://claude.com/claude-code) sessions responsible for them, and
+see what PRs/MRs your live sessions are tracking.
 
 When you run many parallel Claude Code sessions, it's easy to lose track of which
 session opened a given PR — or what each running session is currently working on.
 Claude Code already records the answer in each session's local JSONL transcript:
-the `gh pr create` calls a session ran, and the PRs it references (`pr-link`
-records). `claude-pr` reads those transcripts (read-only) to answer two questions:
+the PRs/MRs it references (`pr-link` records — one record type covering GitHub
+PRs and GitLab MRs alike), and the `gh pr create` calls a session ran.
+`claude-pr` reads those transcripts (read-only) to answer two questions:
 
-- **Which session created PR #N?** — `claude-pr <N>`
-- **What is every live session working on?** — `claude-pr` (no PR argument)
+- **Which session created PR/MR #N?** — `claude-pr <N>`
+- **What is every live session working on?** — `claude-pr` (no argument)
+
+GitLab support keys off a separate config dir: point `CLAUDE_CONFIG_DIR` at the
+one you use for an internal GitLab instance (see [How it works](#how-it-works)).
 
 ## Usage
 
 ```
-claude-pr [flags] [<PR>]     # <PR>: 1234, #1234, or a github.com PR URL
+claude-pr [flags] [<ref>]    # <ref>: 1234, #1234, !1234, or a PR/MR URL
 ```
 
-### Reverse lookup — which sessions reference a PR
+### Reverse lookup — which sessions reference a PR/MR
 
-Give a PR as a bare number, `#`-prefixed, or a full URL, and `claude-pr` reports
-only the session(s) referencing it, in the same row format as the list below:
+Give a PR/MR as a bare number, `#`- or `!`-prefixed, or a full URL, and
+`claude-pr` reports only the session(s) referencing it, in the same row format as
+the list below:
 
 ```
 $ claude-pr 17801
@@ -35,11 +41,13 @@ ci-loop-to-iscsi  724ceb21  ~/github/rook7  exited
   └ rook/rook#17801  (created)
 ```
 
-Accepts `1234`, `#1234` (quote it as `'#1234'` so the shell doesn't treat it as a
-comment), or `https://github.com/<owner>/<repo>/pull/1234` (a URL also pins the
-owner/repo). Live sessions only by default; add `--exited` to include exited
-ones, and `-c`/`--creator` to show only sessions that *created* the PR. Adding
-`-o`/`--open` reports the match only when that PR is still open.
+Accepts `1234`, `#1234` / `!1234` (quote it as `'#1234'` so the shell doesn't
+treat it as a comment), a GitHub PR URL
+(`https://github.com/<owner>/<repo>/pull/1234`), or a GitLab MR URL
+(`https://<host>/<group>/<project>/-/merge_requests/1234`) — a URL also pins the
+project. Live sessions only by default; add `--exited` to include exited ones,
+and `-c`/`--creator` to show only sessions that *created* the PR. Adding
+`-o`/`--open` reports the match only when that PR/MR is still open.
 
 ### List mode — what live sessions are tracking
 
@@ -60,11 +68,12 @@ Flags:
 - `--exited` — also include exited (no longer running) sessions, shown with an
   `exited` status (live sessions only by default).
 - `-c`, `--creator` — show only the PRs each session created.
-- `--status` — annotate each PR with live GitHub state (OPEN/MERGED/CLOSED,
-  draft, check counts, review decision) via the `gh` CLI.
-- `-o`, `--open` — keep only PRs that are OPEN (draft or not); implies
-  `--status`. Merged, closed, and unresolved PRs are dropped, along with any
-  session left with no open PR. Needs the `gh` CLI.
+- `--status` — annotate each PR/MR with live state (OPEN/MERGED/CLOSED, draft,
+  checks, and for GitHub the review decision) — via the `gh` CLI for GitHub PRs
+  and the [`glab`](https://gitlab.com/gitlab-org/cli) CLI for GitLab MRs.
+- `-o`, `--open` — keep only PRs/MRs that are OPEN (draft or not); implies
+  `--status`. Merged, closed, and unresolved ones are dropped, along with any
+  session left with none. Needs `gh` (for GitHub) and/or `glab` (for GitLab).
 - `--url` — print raw PR URLs instead of terminal hyperlinks.
 - `--full-uuid` — show the full session UUID (default: 8-char prefix).
 - `--color` / `--no-color` — force or disable ANSI color (default: auto; honors
@@ -165,7 +174,15 @@ GitHub Enterprise PRs) point at their real host rather than github.com.
 - **Unix liveness.** List mode decides which sessions are "live" by probing
   pids with `kill(2)` (signal 0), which works on Linux and macOS — but it must
   run where it can see the session processes (not in a PID-namespaced sandbox).
-- **`--status` needs `gh`** authenticated; without it, listing still works.
-  Each status fetch is bounded to 30s so a hung `gh` can't wedge the listing.
-- The PR↔session creator match assumes a literal `gh pr create` invocation; a
-  creator that wraps it behind a variable or unusual quoting may be missed.
+- **`--status` needs `gh`** (GitHub) and/or **`glab`** (GitLab) authenticated —
+  for a self-hosted GitLab instance, `glab` must have a token for that host
+  (e.g. `glab auth login --hostname <host>`). Without the relevant CLI, those
+  PRs/MRs simply show no status; the rest of the listing still works. Each fetch
+  is bounded to 30s so a hung CLI can't wedge the listing.
+- **`--open` and `--status` span providers.** GitLab MR state is normalized to
+  the same OPEN/MERGED/CLOSED vocabulary, so `--open` filters GitHub PRs and
+  GitLab MRs uniformly; GitLab CI shows as a single pipeline glyph (✓/✗/⧖)
+  rather than GitHub's per-check counts.
+- The **creator** flag (`(created)`) is currently GitHub-only: it correlates a
+  literal `gh pr create` invocation with the bare PR-URL line it printed. GitLab
+  MRs are still tracked (via `pr-link`), just never flagged `(created)`.

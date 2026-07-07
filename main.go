@@ -35,8 +35,9 @@ type prQuery struct {
 	num  int
 }
 
-// parsePRArg parses a PR reference: bare "1234", "#1234", or a full PR URL.
-// repo is "" unless a URL supplied one. PR numbers start at 1.
+// parsePRArg parses a PR/MR reference: bare "1234", "#1234", "!1234", a GitHub
+// PR URL, or a GitLab MR URL. repo is "" unless a URL supplied one (for GitLab
+// it is the full nested project path). Numbers start at 1.
 func parsePRArg(s string) (repo string, num int, ok bool) {
 	s = strings.TrimSpace(s)
 	if m := rePRArgURL.FindStringSubmatch(s); m != nil {
@@ -45,7 +46,12 @@ func parsePRArg(s string) (repo string, num int, ok bool) {
 		}
 		return "", 0, false
 	}
-	s = strings.TrimPrefix(s, "#")
+	if _, project, iid, ok := parseMRURL(s); ok {
+		return project, iid, true
+	}
+	if len(s) > 0 && (s[0] == '#' || s[0] == '!') { // GitHub PR / GitLab MR sigil
+		s = s[1:]
+	}
 	if s == "" {
 		return "", 0, false
 	}
@@ -66,26 +72,26 @@ func isTTY(f *os.File) bool {
 }
 
 func printUsage() {
-	fmt.Print(`claude-pr — map GitHub PRs to the Claude Code sessions responsible for them.
+	fmt.Print(`claude-pr — map GitHub PRs / GitLab MRs to the Claude Code sessions for them.
 
 Usage:
-  claude-pr [flags] [<PR>]            # <PR>: 1234, #1234, or a github.com PR URL
+  claude-pr [flags] [<ref>]          # <ref>: 1234, #1234, !1234, or a PR/MR URL
 
 Modes:
-  with a PR ref      report only the session(s) referencing that PR (live by
+  with a PR/MR ref   report only the session(s) referencing it (live by
                      default; add --exited to include exited sessions).
-  no arguments       list currently-live sessions and the PRs each is tracking.
+  no arguments       list currently-live sessions and the PRs/MRs each tracks.
 
 Flags:
   -c, --creator    show only PRs/sessions where the session created the PR.
   -a, --all        list mode: also show sessions with no tracked PRs.
       --exited     also include exited (no longer running) sessions, shown
                    with an "exited" status.
-      --status     annotate each PR with live GitHub state (OPEN/MERGED/
-                   CLOSED, draft, checks, review) via gh.
-  -o, --open       keep only OPEN PRs (draft or not); implies --status. Drops
-                   merged, closed, and unresolved PRs, and any session left
-                   with no open PR. Needs the gh CLI.
+      --status     annotate each PR/MR with live state (OPEN/MERGED/CLOSED,
+                   draft, checks) via gh for GitHub, glab for GitLab.
+  -o, --open       keep only OPEN PRs/MRs (draft or not); implies --status.
+                   Drops merged, closed, and unresolved ones, and any session
+                   left with none. Needs gh (GitHub) and/or glab (GitLab).
       --url        print raw PR URLs instead of terminal hyperlinks.
       --full-uuid  show the full session UUID (default: 8-char prefix).
       --color      force ANSI color.
@@ -100,13 +106,13 @@ Flags:
   -h, --help       show this help and exit.
 
 Examples:
-  claude-pr 17801             live sessions referencing PR #17801
+  claude-pr 17801             live sessions referencing PR/MR #17801
   claude-pr '#17801'          same; quote the # so the shell keeps it
-  claude-pr <pr-url>          match the exact owner/repo + PR from a URL
+  claude-pr <pr-or-mr-url>    match the exact project + PR/MR from a URL
   claude-pr 17801 --exited    include exited sessions too
   claude-pr -c 17801          only sessions that created it
-  claude-pr                   all live sessions and the PRs they track
-  claude-pr -o                only sessions with an open PR (draft or not)
+  claude-pr                   all live sessions and the PRs/MRs they track
+  claude-pr -o                only sessions with an open PR/MR (draft or not)
 
 Exit status:
   0  normal output (list rendered, or the lookup matched)
@@ -116,8 +122,8 @@ Exit status:
 Sessions are read read-only from $CLAUDE_CONFIG_DIR if set (and only there, so a
 separate config for e.g. an internal GitLab instance stays isolated), else from
 Claude Code's default ~/.claude. Liveness is probed with kill(2), so it needs to
-run where it can see the session processes; --status needs the gh CLI
-authenticated.
+run where it can see the session processes; --status needs gh (GitHub) and/or
+glab (GitLab) authenticated.
 `)
 }
 

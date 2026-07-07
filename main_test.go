@@ -20,14 +20,19 @@ func TestParsePRArg(t *testing.T) {
 		"http://github.com/o/r/pull/5":            {"o/r", 5, true},
 		"https://github.com/o/r/pull/5/files":     {"o/r", 5, true},
 		"https://github.com/o/r/pull/5?x=1":       {"o/r", 5, true},
-		"":                                        {"", 0, false},
-		"#":                                       {"", 0, false},
-		"0":                                       {"", 0, false},
-		"#0":                                      {"", 0, false},
-		"12a":                                     {"", 0, false},
-		"not-a-pr":                                {"", 0, false},
-		"https://gitlab.com/o/r/pull/5":           {"", 0, false},
-		"https://github.com/o/r/pull/0":           {"", 0, false},
+		"!437":                                    {"", 437, true},
+		"https://gitlab.example.com/group/subgroup/project/-/merge_requests/437": {"group/subgroup/project", 437, true},
+		"https://gl.example.com/o/r/-/merge_requests/5/diffs":                    {"o/r", 5, true},
+		"https://gl.example.com/o/r/-/merge_requests/0":                          {"", 0, false},
+		"":                              {"", 0, false},
+		"#":                             {"", 0, false},
+		"!":                             {"", 0, false},
+		"0":                             {"", 0, false},
+		"#0":                            {"", 0, false},
+		"12a":                           {"", 0, false},
+		"not-a-pr":                      {"", 0, false},
+		"https://gitlab.com/o/r/pull/5": {"", 0, false},
+		"https://github.com/o/r/pull/0": {"", 0, false},
 	}
 	for in, w := range cases {
 		repo, num, ok := parsePRArg(in)
@@ -70,6 +75,62 @@ func TestScanTrackedPreservesURL(t *testing.T) {
 	}
 	if got := r.webURL(); got != mrURL {
 		t.Errorf("webURL() = %q, want the stored MR URL", got)
+	}
+}
+
+func TestParseMRURL(t *testing.T) {
+	host, project, iid, ok := parseMRURL("https://gl.example.com/group/sub/proj/-/merge_requests/42")
+	if !ok || host != "gl.example.com" || project != "group/sub/proj" || iid != 42 {
+		t.Errorf("parseMRURL nested = (%q,%q,%d,%v), want (gl.example.com, group/sub/proj, 42, true)", host, project, iid, ok)
+	}
+	// trailing /diffs and query are tolerated
+	if _, _, iid, ok := parseMRURL("https://h/o/r/-/merge_requests/7/diffs?x=1"); !ok || iid != 7 {
+		t.Errorf("parseMRURL trailing = (%d,%v), want (7,true)", iid, ok)
+	}
+	for _, bad := range []string{
+		"https://github.com/o/r/pull/5",    // GitHub PR, not MR
+		"https://h/o/r/-/merge_requests/0", // iid must be positive
+		"https://h/o/r/-/issues/5",         // not an MR path
+		"not a url",
+	} {
+		if _, _, _, ok := parseMRURL(bad); ok {
+			t.Errorf("parseMRURL(%q) ok=true, want false", bad)
+		}
+	}
+}
+
+func TestPRRefProvider(t *testing.T) {
+	mr := prRef{repo: "grp/sub/proj", num: 5, url: "https://gl.example.com/grp/sub/proj/-/merge_requests/5"}
+	if !mr.isGitLab() || mr.sigil() != "!" || mr.displayRef() != "grp/sub/proj!5" {
+		t.Errorf("GitLab ref: isGitLab=%v sigil=%q displayRef=%q", mr.isGitLab(), mr.sigil(), mr.displayRef())
+	}
+	pr := prRef{repo: "o/r", num: 9, url: "https://github.com/o/r/pull/9"}
+	if pr.isGitLab() || pr.sigil() != "#" || pr.displayRef() != "o/r#9" {
+		t.Errorf("GitHub ref: isGitLab=%v sigil=%q displayRef=%q", pr.isGitLab(), pr.sigil(), pr.displayRef())
+	}
+}
+
+func TestFormatGitLabMR(t *testing.T) {
+	cases := map[string]string{
+		`{"state":"opened","draft":true,"pipeline":{"status":"success"}}`:           "OPEN draft ✓",
+		`{"state":"opened","work_in_progress":true,"pipeline":{"status":"failed"}}`: "OPEN draft ✗",
+		`{"state":"opened","head_pipeline":{"status":"running"}}`:                   "OPEN ⧖",
+		`{"state":"merged","pipeline":{"status":"success"}}`:                        "MERGED ✓",
+		`{"state":"closed"}`: "CLOSED",
+		`{"state":"locked"}`: "LOCKED",
+		`{"state":"opened","pipeline":{"status":"manual"}}`: "OPEN", // manual pipeline => no glyph
+	}
+	for in, want := range cases {
+		if got := formatGitLabMR([]byte(in)); got != want {
+			t.Errorf("formatGitLabMR(%s) = %q, want %q", in, got, want)
+		}
+	}
+	if got := formatGitLabMR([]byte("not json")); got != "status? parse error" {
+		t.Errorf("formatGitLabMR(bad) = %q, want parse error", got)
+	}
+	// head_pipeline takes precedence over the deprecated pipeline field.
+	if got := formatGitLabMR([]byte(`{"state":"opened","head_pipeline":{"status":"success"},"pipeline":{"status":"failed"}}`)); got != "OPEN ✓" {
+		t.Errorf("head_pipeline precedence = %q, want OPEN ✓", got)
 	}
 }
 
