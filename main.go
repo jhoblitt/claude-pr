@@ -84,7 +84,8 @@ Modes:
   no arguments       list currently-live sessions and the PRs/MRs each tracks.
 
 Flags:
-  -c, --creator    show only PRs/sessions where the session created the PR.
+  -c, --creator    show only PRs/sessions where the session created the PR
+                   (GitHub only; detected from a gh pr create invocation).
   -a, --all        list mode: also show sessions with no tracked PRs.
       --exited     also include exited (no longer running) sessions, shown
                    with an "exited" status.
