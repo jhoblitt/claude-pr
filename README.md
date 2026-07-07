@@ -148,10 +148,17 @@ go build -o ~/bin/claude-pr .
 ## How it works
 
 `claude-pr` reads Claude Code's session transcripts under `$CLAUDE_CONFIG_DIR`
-(falling back to `~/.claude-personal`, `~/.claude`, or `~/.config/claude`). It
-never writes to them. PR creation is identified by correlating a `gh pr create`
-Bash tool call with the bare PR-URL line it printed; tracked PRs come from
-`pr-link` records.
+if that is set — and **only** there, so a separate config dir (e.g. one you use
+for an internal GitLab instance) stays isolated from your default sessions —
+otherwise it falls back to Claude Code's default `~/.claude`. It never writes to
+them. Tracked PRs/MRs come from `pr-link`
+records (a single record type Claude Code writes for GitHub PRs **and** GitLab
+merge requests, carrying the real review URL); PR creation is additionally
+identified by correlating a `gh pr create` Bash tool call with the bare PR-URL
+line it printed.
+
+Each PR/MR link uses the URL Claude Code recorded, so GitLab MRs (and
+GitHub Enterprise PRs) point at their real host rather than github.com.
 
 ## Notes / caveats
 

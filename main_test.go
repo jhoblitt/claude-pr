@@ -37,6 +37,55 @@ func TestParsePRArg(t *testing.T) {
 	}
 }
 
+func TestCandidateProjectDirs(t *testing.T) {
+	// CLAUDE_CONFIG_DIR set => authoritative, only its projects dir.
+	got := candidateProjectDirs("/cfg/enterprise", "/home/me")
+	if len(got) != 1 || got[0] != "/cfg/enterprise/projects" {
+		t.Errorf("cfg set: got %v, want [/cfg/enterprise/projects]", got)
+	}
+	// Unset => Claude Code's documented default, ~/.claude only.
+	got = candidateProjectDirs("", "/home/me")
+	if len(got) != 1 || got[0] != "/home/me/.claude/projects" {
+		t.Errorf("cfg unset: got %v, want [/home/me/.claude/projects]", got)
+	}
+	// Neither set => nothing (no home => no default).
+	if got := candidateProjectDirs("", ""); got != nil {
+		t.Errorf("no cfg, no home: got %v, want nil", got)
+	}
+}
+
+func TestScanTrackedPreservesURL(t *testing.T) {
+	mrURL := "https://gitlab.example.com/group/subgroup/project/-/merge_requests/437"
+	data := []byte(`{"type":"pr-link","prNumber":437,"prRepository":"group/subgroup/project","prUrl":"` + mrURL + `"}`)
+	refs := scanTracked(data)
+	if len(refs) != 1 {
+		t.Fatalf("got %d refs, want 1", len(refs))
+	}
+	r := refs[0]
+	if r.repo != "group/subgroup/project" || r.num != 437 {
+		t.Errorf("repo/num = %q/%d, want group/subgroup/project/437", r.repo, r.num)
+	}
+	if r.url != mrURL {
+		t.Errorf("url = %q, want %q", r.url, mrURL)
+	}
+	if got := r.webURL(); got != mrURL {
+		t.Errorf("webURL() = %q, want the stored MR URL", got)
+	}
+}
+
+func TestPRWebURL(t *testing.T) {
+	// A stored URL (GitLab MR) is used verbatim.
+	mr := prRef{repo: "grp/sub/proj", num: 5, url: "https://gl.example.com/grp/sub/proj/-/merge_requests/5"}
+	if got := mr.webURL(); got != mr.url {
+		t.Errorf("webURL() = %q, want stored %q", got, mr.url)
+	}
+	// No stored URL => github.com fallback reconstruction.
+	legacy := prRef{repo: "o/r", num: 9}
+	if got, want := legacy.webURL(), "https://github.com/o/r/pull/9"; got != want {
+		t.Errorf("webURL() fallback = %q, want %q", got, want)
+	}
+}
+
 func TestPidAlive(t *testing.T) {
 	if !pidAlive(os.Getpid()) {
 		t.Error("pidAlive(self) = false, want true")

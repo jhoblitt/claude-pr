@@ -113,10 +113,11 @@ Exit status:
   1  no match: the lookup found no session, or --open filtered everything out
   2  usage error
 
-Sessions are read read-only from $CLAUDE_CONFIG_DIR (falling back to
-~/.claude-personal, ~/.claude, ~/.config/claude). Liveness is probed with
-kill(2), so it needs to run where it can see the session processes; --status
-needs the gh CLI authenticated.
+Sessions are read read-only from $CLAUDE_CONFIG_DIR if set (and only there, so a
+separate config for e.g. an internal GitLab instance stays isolated), else from
+Claude Code's default ~/.claude. Liveness is probed with kill(2), so it needs to
+run where it can see the session processes; --status needs the gh CLI
+authenticated.
 `)
 }
 
