@@ -241,6 +241,15 @@ func pruneOpen(rows []row, statusByKey map[string]string) ([]row, []string) {
 	return kept, msgs
 }
 
+// exitedHint returns the suffix an empty-result message carries when exited
+// sessions may hold the match the user was looking for.
+func exitedHint(includeExited bool) string {
+	if !includeExited {
+		return " (drop --no-exited to include exited sessions)"
+	}
+	return ""
+}
+
 // runListMode renders the session listing (optionally filtered to one PR) and
 // returns the process exit code: 0 on a match/normal listing, 1 when a lookup
 // or --open filter matched nothing.
@@ -318,11 +327,7 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 	sort.Slice(rows, func(i, j int) bool { return rowLess(rows[i], rows[j]) })
 
 	if filter != nil && len(rows) == 0 {
-		hint := ""
-		if !includeExited {
-			hint = " (use --exited to include exited sessions)"
-		}
-		fmt.Fprintln(os.Stderr, "claude-pr: no session references that PR"+hint)
+		fmt.Fprintln(os.Stderr, "claude-pr: no session references that PR"+exitedHint(includeExited))
 		return 1
 	}
 
@@ -382,11 +387,7 @@ func runListMode(creatorOnly, showStatus, showEmpty, includeExited, openOnly boo
 			if filter != nil {
 				fmt.Fprintln(os.Stderr, "claude-pr: that PR is not open")
 			} else {
-				hint := ""
-				if !includeExited {
-					hint = " (use --exited to include exited sessions)"
-				}
-				fmt.Fprintln(os.Stderr, "claude-pr: no session has an open tracked PR"+hint)
+				fmt.Fprintln(os.Stderr, "claude-pr: no session has an open tracked PR"+exitedHint(includeExited))
 			}
 			return 1
 		}

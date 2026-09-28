@@ -4,7 +4,7 @@
 
 Reverse-map GitHub pull requests **and GitLab merge requests** to the
 [Claude Code](https://claude.com/claude-code) sessions responsible for them, and
-see what PRs/MRs your live sessions are tracking.
+see what PRs/MRs your sessions are tracking.
 
 When you run many parallel Claude Code sessions, it's easy to lose track of which
 session opened a given PR — or what each running session is currently working on.
@@ -14,7 +14,7 @@ PRs and GitLab MRs alike), and the `gh pr create` calls a session ran.
 `claude-pr` reads those transcripts (read-only) to answer two questions:
 
 - **Which session created PR/MR #N?** — `claude-pr <N>`
-- **What is every live session working on?** — `claude-pr` (no argument)
+- **What is every session working on?** — `claude-pr` (no argument)
 
 GitLab support keys off a separate config dir: point `CLAUDE_CONFIG_DIR` at the
 one you use for an internal GitLab instance (see [How it works](#how-it-works)).
@@ -35,25 +35,28 @@ the list below:
 $ claude-pr 17801
 claude-pr         8ffe82dd  ~/github/rook7  busy
   └ rook/rook#17801
-
-$ claude-pr 17801 --exited
 ci-loop-to-iscsi  724ceb21  ~/github/rook7  exited
   └ rook/rook#17801  (created)
+
+$ claude-pr 17801 --no-exited
+claude-pr         8ffe82dd  ~/github/rook7  busy
+  └ rook/rook#17801
 ```
 
 Accepts `1234`, `#1234` / `!1234` (quote it as `'#1234'` so the shell doesn't
 treat it as a comment), a GitHub PR URL
 (`https://github.com/<owner>/<repo>/pull/1234`), or a GitLab MR URL
 (`https://<host>/<group>/<project>/-/merge_requests/1234`) — a URL also pins the
-project. Live sessions only by default; add `--exited` to include exited ones,
-and `-c`/`--creator` to show only sessions that *created* the PR. Adding
+project. Live and exited sessions by default; add `--no-exited` for live ones
+only, and `-c`/`--creator` to show only sessions that *created* the PR. Adding
 `-o`/`--open` reports the match only when that PR/MR is still open.
 
-### List mode — what live sessions are tracking
+### List mode — what sessions are tracking
 
-With no PR number, it lists the currently-live sessions (process still running,
-from the daemon's `sessions/` registry) as `name · uuid · cwd · status`, each
-followed by a tree of the PRs it tracks. Created PRs are flagged; each PR id is a
+With no PR number, it lists sessions — live ones (process still running, from
+the daemon's `sessions/` registry) and exited ones (recovered from their
+transcripts) — as `name · uuid · cwd · status`, each followed by a tree of the
+PRs it tracks. Created PRs are flagged; each PR id is a
 clickable terminal hyperlink ([OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda)).
 
 ```
@@ -65,8 +68,8 @@ ci-loop-to-iscsi                724ceb21  ~/github/rook7   idle
 Flags:
 
 - `-a`, `--all` — also list sessions with no tracked PRs (hidden by default).
-- `--exited` — also include exited (no longer running) sessions, shown with an
-  `exited` status (live sessions only by default).
+- `--exited` / `--no-exited` — include exited (no longer running) sessions,
+  shown with an `exited` status (the default), or only live ones.
 - `-c`, `--creator` — show only the PRs each session created.
 - `-s`, `--status` — annotate each PR/MR with live state (OPEN/MERGED/CLOSED, draft,
   checks, and for GitHub the review decision) — via the `gh` CLI for GitHub PRs
@@ -88,7 +91,7 @@ Flags:
 
 `0` normal output; `1` no match (a lookup found no session, or `--open`
 filtered everything out) — handy in scripts, e.g.
-`claude-pr -o 17801 && echo "still being worked on"`; `2` usage error.
+`claude-pr -o --no-exited 17801 && echo "still being worked on"`; `2` usage error.
 
 ## Resuming a session
 

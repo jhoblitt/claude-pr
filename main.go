@@ -1,5 +1,5 @@
 // claude-pr maps a GitHub PR to the Claude Code session(s) that reference it,
-// and lists the live sessions and the PRs each is tracking.
+// and lists sessions and the PRs each is tracking.
 //
 // Given a PR reference — bare "1234", "#1234", or a PR URL — it reports only the
 // session(s) whose tracked PRs (from "pr-link" records) include that PR. A PR is
@@ -7,8 +7,9 @@
 // `gh pr create` for it (detected from the command, not a mention) and its
 // result carried the bare PR URL.
 //
-// With no PR argument, it lists the currently-live sessions (from the daemon's
-// sessions/ registry, process still running) as aligned columns —
+// With no PR argument, it lists sessions, live and exited (live ones come from
+// the daemon's sessions/ registry, exited ones from their transcripts;
+// --no-exited keeps only live ones), as aligned columns —
 // name · uuid · cwd · status — each followed by a tree of the PRs it is
 // tracking, with created PRs flagged and each PR id a clickable terminal
 // hyperlink (OSC 8). Session identity shows the /rename title when set, else
@@ -79,16 +80,18 @@ Usage:
   claude-pr [flags] [<ref>]          # <ref>: 1234, #1234, !1234, or a PR/MR URL
 
 Modes:
-  with a PR/MR ref   report only the session(s) referencing it (live by
-                     default; add --exited to include exited sessions).
-  no arguments       list currently-live sessions and the PRs/MRs each tracks.
+  with a PR/MR ref   report only the session(s) referencing it, live or
+                     exited (add --no-exited for live sessions only).
+  no arguments       list sessions, live and exited, and the PRs/MRs each
+                     tracks.
 
 Flags:
   -c, --creator    show only PRs/sessions where the session created the PR
                    (GitHub only; detected from a gh pr create invocation).
   -a, --all        list mode: also show sessions with no tracked PRs.
-      --exited     also include exited (no longer running) sessions, shown
-                   with an "exited" status.
+      --exited / --no-exited
+                   include exited (no longer running) sessions, shown with
+                   an "exited" status (default), or only live ones.
   -s, --status     annotate each PR/MR with live state (OPEN/MERGED/CLOSED,
                    draft, checks) via gh for GitHub, glab for GitLab.
   -o, --open       keep only OPEN PRs/MRs (draft or not); implies --status.
@@ -115,12 +118,12 @@ Flags:
   -h, --help       show this help and exit.
 
 Examples:
-  claude-pr 17801             live sessions referencing PR/MR #17801
+  claude-pr 17801             sessions referencing PR/MR #17801
   claude-pr '#17801'          same; quote the # so the shell keeps it
   claude-pr <pr-or-mr-url>    match the exact project + PR/MR from a URL
-  claude-pr 17801 --exited    include exited sessions too
+  claude-pr 17801 --no-exited only live sessions
   claude-pr -c 17801          only sessions that created it
-  claude-pr                   all live sessions and the PRs/MRs they track
+  claude-pr                   all sessions and the PRs/MRs they track
   claude-pr -o                only sessions with an open PR/MR (draft or not)
 
 Exit status:
@@ -140,7 +143,7 @@ func main() {
 	creatorOnly := false
 	showStatus := false
 	showEmpty := false
-	includeExited := false
+	includeExited := true
 	openOnly := false
 	forceURL := false
 	colorMode := "auto"
@@ -166,6 +169,8 @@ func main() {
 			showEmpty = true
 		case "--exited":
 			includeExited = true
+		case "--no-exited":
+			includeExited = false
 		case "-s", "--status":
 			showStatus = true
 		case "-o", "--open":
