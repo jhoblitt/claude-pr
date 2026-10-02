@@ -33,13 +33,13 @@ the list below:
 
 ```
 $ claude-pr 17801
-claude-pr         8ffe82dd  ~/github/rook7  busy
+claude-pr         8ffe82dd-303a-49c4-93a0-2b3b32624006  ~/github/rook7  busy
   └ rook/rook#17801
-ci-loop-to-iscsi  724ceb21  ~/github/rook7  exited
+ci-loop-to-iscsi  724ceb21-5d1e-4f0a-9c3b-6a2e8f7d1b40  ~/github/rook7  exited
   └ rook/rook#17801  (created)
 
 $ claude-pr 17801 --no-exited
-claude-pr         8ffe82dd  ~/github/rook7  busy
+claude-pr         8ffe82dd-303a-49c4-93a0-2b3b32624006  ~/github/rook7  busy
   └ rook/rook#17801
 ```
 
@@ -61,7 +61,7 @@ clickable terminal hyperlink ([OSC 8](https://gist.github.com/egmontkob/eb114294
 
 ```
 $ claude-pr
-ci-loop-to-iscsi                724ceb21  ~/github/rook7   idle
+ci-loop-to-iscsi                724ceb21-5d1e-4f0a-9c3b-6a2e8f7d1b40  ~/github/rook7   idle
   └ #17801  (created)
 ```
 
@@ -78,7 +78,8 @@ Flags:
   `--status`. Merged, closed, and unresolved ones are dropped, along with any
   session left with none. Needs `gh` (for GitHub) and/or `glab` (for GitLab).
 - `--url` — print raw PR URLs instead of terminal hyperlinks.
-- `--full-uuid` — show the full session UUID (default: 8-char prefix).
+- `--full-uuid` / `--short-uuid` — show the full session UUID (default), which
+  `claude --resume` accepts, or only its 8-char prefix.
 - `--color` / `--no-color` — force or disable ANSI color (default: auto; honors
   `NO_COLOR`).
 - `--resume-links` / `--no-resume-links` — make each session name/uuid a
@@ -96,9 +97,9 @@ filtered everything out) — handy in scripts, e.g.
 ## Resuming a session
 
 `claude --resume` only accepts a full session UUID or the exact session title,
-and it is scoped to the session's project directory — so the short ids in the
-listing can't be pasted into it directly. Instead, `claude-pr` makes each
-session's name and id a clickable [OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda)
+and it is scoped to the session's project directory — so a UUID from the
+listing only resumes when run from that session's cwd. Instead, `claude-pr`
+makes each session's name and id a clickable [OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda)
 hyperlink with a custom `claude-resume://` scheme that carries the full UUID,
 cwd, and `CLAUDE_CONFIG_DIR`. Something has to turn that click into a
 `claude --resume`; there are two ways to wire it up, depending on your terminal.

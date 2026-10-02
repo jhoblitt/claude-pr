@@ -13,7 +13,7 @@ var (
 	colorEnabled bool
 	useHyperlink bool
 	showRawURL   bool
-	fullUUID     bool
+	shortUUID    bool
 	resumeLinks  bool
 )
 
@@ -31,7 +31,7 @@ const (
 )
 
 func uuidDisp(u string) string {
-	if fullUUID || len(u) < 8 {
+	if !shortUUID || len(u) < 8 {
 		return u
 	}
 	return u[:8]
