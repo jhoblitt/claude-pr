@@ -98,7 +98,9 @@ Flags:
                    Drops merged, closed, and unresolved ones, and any session
                    left with none. Needs gh (GitHub) and/or glab (GitLab).
       --url        print raw PR URLs instead of terminal hyperlinks.
-      --full-uuid  show the full session UUID (default: 8-char prefix).
+      --full-uuid / --short-uuid
+                   show the full session UUID (default), which claude --resume
+                   accepts, or only its 8-char prefix.
       --color      force ANSI color.
       --no-color   disable ANSI color (default: auto; honors NO_COLOR).
       --resume-links / --no-resume-links
@@ -178,7 +180,9 @@ func main() {
 		case "--url":
 			forceURL = true
 		case "--full-uuid":
-			fullUUID = true
+			shortUUID = false
+		case "--short-uuid":
+			shortUUID = true
 		case "--color":
 			colorMode = "always"
 		case "--no-color":

@@ -260,18 +260,18 @@ func TestCfgFromPath(t *testing.T) {
 
 func TestUUIDDisp(t *testing.T) {
 	full := "8ffe82dd-303a-49c4-93a0-2b3b32624006"
-	fullUUID = false
+	shortUUID = false
+	if got := uuidDisp(full); got != full {
+		t.Errorf("full uuidDisp = %q, want %q", got, full)
+	}
+	shortUUID = true
 	if got := uuidDisp(full); got != "8ffe82dd" {
 		t.Errorf("short uuidDisp = %q, want 8ffe82dd", got)
 	}
 	if got := uuidDisp("abc"); got != "abc" {
 		t.Errorf("uuidDisp(short) = %q, want abc", got)
 	}
-	fullUUID = true
-	if got := uuidDisp(full); got != full {
-		t.Errorf("full uuidDisp = %q, want %q", got, full)
-	}
-	fullUUID = false
+	shortUUID = false
 }
 
 func TestResumeURI(t *testing.T) {
